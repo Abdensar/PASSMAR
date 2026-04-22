@@ -1,6 +1,24 @@
 const Agent = require("../models/Agent");
 const Autorite = require("../models/Autorite");
 const authService = require("./authService");
+const { ethers } = require("ethers");
+
+async function getAvailableEthAddress() {
+  const url = process.env.GANACHE_URL || "http://127.0.0.1:7545";
+  const provider = new ethers.providers.JsonRpcProvider(url);
+  const accounts = await provider.listAccounts();
+  // Get all used addresses
+  const used = await Agent.find({}, 'eth_address').lean();
+  const usedAddresses = new Set(used.map(a => a.eth_address.toLowerCase()));
+  // Find first unused
+  for (const acc of accounts) {
+    if (!usedAddresses.has(acc.toLowerCase())) {
+      return acc;
+    }
+  }
+  // If all used, generate random (fallback)
+  return ethers.Wallet.createRandom().address;
+}
 
 async function ensureAutorite({ nom_autorite, type_autorite, adresse_ip }) {
   let a = await Autorite.findOne({ type_autorite, nom_autorite });
@@ -19,14 +37,13 @@ async function createAgent(payload) {
     identifiant,
     password,
     role,
-    eth_address,
     id_autorite,
     nom_autorite,
     type_autorite,
     adresse_ip,
   } = payload;
 
-  if (!identifiant || !password || !role || !eth_address) {
+  if (!identifiant || !password || !role) {
     const err = new Error("CHAMPS_REQUIS");
     err.status = 400;
     throw err;
@@ -55,7 +72,7 @@ async function createAgent(payload) {
   }
 
   const pwd_hash = await authService.hashPassword(password);
-  const eth = String(eth_address).trim().toLowerCase();
+  const eth_address = await getAvailableEthAddress();
 
   let totp_secret = null;
   let totp_enabled = false;
@@ -73,7 +90,7 @@ async function createAgent(payload) {
       identifiant: String(identifiant).trim(),
       pwd_hash,
       role,
-      eth_address: eth,
+      eth_address,
       totp_secret,
       totp_enabled,
     });
@@ -93,6 +110,7 @@ async function createAgent(payload) {
 
 async function listAgents() {
   return Agent.find({})
+    .populate('id_autorite')
     .select("-pwd_hash -totp_secret")
     .sort({ created_at: -1 })
     .lean();

@@ -3,10 +3,14 @@ import { useNavigate } from "react-router-dom";
 import { api, formatError } from "../services/apiClient";
 import PassportForm from "../components/PassportForm";
 import TravelLog from "../components/TravelLog";
+import SidebarLayout from "../components/SidebarLayout";
+import AlertResult from "../components/AlertResult";
+import HashDisplay from "../components/HashDisplay";
+import toast from 'react-hot-toast';
 
 export default function DashboardDouane({ agent, onLogout }) {
   const nav = useNavigate();
-  const [tab, setTab] = useState("create");
+  const [currentPage, setCurrentPage] = useState("create");
   const [renew, setRenew] = useState({
     num_passeport: "",
     mrz: "",
@@ -26,8 +30,8 @@ export default function DashboardDouane({ agent, onLogout }) {
   });
   const [lookup, setLookup] = useState("");
   const [lookupRes, setLookupRes] = useState(null);
-  const [msg, setMsg] = useState("");
-  const [err, setErr] = useState("");
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
 
   async function doLogout() {
     await api.logout();
@@ -37,227 +41,410 @@ export default function DashboardDouane({ agent, onLogout }) {
 
   async function submitRenew(e) {
     e.preventDefault();
-    setErr("");
-    setMsg("");
+    setResult(null);
+    setLoading(true);
     try {
       const payload = {
         ...renew,
         date_expiration: renew.date_expiration ? new Date(renew.date_expiration).toISOString() : "",
       };
       const out = await api.post("/passport/renew", payload);
-      setMsg(JSON.stringify(out, null, 2));
+      setResult({ code: 200, message: "Passeport renouvelé avec succès", data: out });
+      toast.success("Passeport renouvelé !");
     } catch (ex) {
-      setErr(formatError(ex));
+      setResult({ code: ex.response?.status || 500, message: formatError(ex) });
+      toast.error(formatError(ex));
+    } finally {
+      setLoading(false);
     }
   }
 
   async function submitRevoke(e) {
     e.preventDefault();
-    setErr("");
-    setMsg("");
+    setResult(null);
+    setLoading(true);
     try {
       const out = await api.post("/passport/revoke/initiate", revoke);
-      setMsg(JSON.stringify(out, null, 2));
+      setResult({ code: 200, message: "Demande de révocation initiée", data: out });
+      toast.success("Demande de révocation soumise !");
     } catch (ex) {
-      setErr(formatError(ex));
+      setResult({ code: ex.response?.status || 500, message: formatError(ex) });
+      toast.error(formatError(ex));
+    } finally {
+      setLoading(false);
     }
   }
 
   async function submitForeign(e) {
     e.preventDefault();
-    setErr("");
-    setMsg("");
+    setResult(null);
+    setLoading(true);
     try {
       const payload = {
         ...foreign,
         date_passage: foreign.date_passage ? new Date(foreign.date_passage).toISOString() : "",
       };
       const out = await api.post("/passport/foreign-travel", payload);
-      setMsg(JSON.stringify(out, null, 2));
+      setResult({ code: 200, message: "Voyage étranger enregistré", data: out });
+      toast.success("Voyage enregistré !");
     } catch (ex) {
-      setErr(formatError(ex));
+      setResult({ code: ex.response?.status || 500, message: formatError(ex) });
+      toast.error(formatError(ex));
+    } finally {
+      setLoading(false);
     }
   }
 
   async function loadPassport(e) {
     e.preventDefault();
-    setErr("");
+    setResult(null);
     setLookupRes(null);
+    setLoading(true);
     try {
       const out = await api.get(`/passport/${encodeURIComponent(lookup)}`);
       setLookupRes(out);
+      setResult({ code: 200, message: "Passeport trouvé", data: out });
     } catch (ex) {
-      setErr(formatError(ex));
+      setResult({ code: ex.response?.status || 500, message: formatError(ex) });
+      toast.error(formatError(ex));
+    } finally {
+      setLoading(false);
     }
   }
 
+  const renderContent = () => {
+    switch (currentPage) {
+      case "create":
+        return <PassportForm />;
+      case "travel":
+        return <TravelLog />;
+      case "renew":
+        return (
+          <div className="max-w-2xl">
+            <h2 className="text-2xl font-bold mb-6 text-text-light dark:text-text">Renouvellement de Passeport</h2>
+            <div className="bg-surface-light dark:bg-surface-dark border border-gray-200 dark:border-gray-700 rounded-xl p-6">
+              <form onSubmit={submitRenew} className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-text-light dark:text-text mb-2">
+                      Ancien n° passeport
+                    </label>
+                    <input
+                      type="text"
+                      value={renew.num_passeport}
+                      onChange={(e) => setRenew({ ...renew, num_passeport: e.target.value })}
+                      className="w-full px-3 py-2 bg-background-light dark:bg-background border border-gray-300 dark:border-gray-600 rounded-lg text-text-light dark:text-text placeholder-muted-light dark:placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary-light dark:focus:ring-primary"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-text-light dark:text-text mb-2">
+                      Nouveau n° passeport
+                    </label>
+                    <input
+                      type="text"
+                      value={renew.nouveau_num_passeport}
+                      onChange={(e) => setRenew({ ...renew, nouveau_num_passeport: e.target.value })}
+                      className="w-full px-3 py-2 bg-background-light dark:bg-background border border-gray-300 dark:border-gray-600 rounded-lg text-text-light dark:text-text placeholder-muted-light dark:placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary"
+                      required
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-text-light dark:text-text mb-2">
+                    Ancien MRZ
+                  </label>
+                  <input
+                    type="text"
+                    value={renew.mrz}
+                    onChange={(e) => setRenew({ ...renew, mrz: e.target.value })}
+                    className="w-full px-3 py-2 bg-background-light dark:bg-background border border-gray-300 dark:border-gray-600 rounded-lg text-text-light dark:text-text placeholder-muted-light dark:placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-text-light dark:text-text mb-2">
+                    Nouveau MRZ
+                  </label>
+                  <input
+                    type="text"
+                    value={renew.nouveau_mrz}
+                    onChange={(e) => setRenew({ ...renew, nouveau_mrz: e.target.value })}
+                    className="w-full px-3 py-2 bg-background-light dark:bg-background border border-gray-300 dark:border-gray-600 rounded-lg text-text-light dark:text-text placeholder-muted-light dark:placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary"
+                    required
+                  />
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-text-light dark:text-text mb-2">
+                      Nouvelle expiration
+                    </label>
+                    <input
+                      type="date"
+                      value={renew.date_expiration}
+                      onChange={(e) => setRenew({ ...renew, date_expiration: e.target.value })}
+                      className="w-full px-3 py-2 bg-background-light dark:bg-background border border-gray-300 dark:border-gray-600 rounded-lg text-text-light dark:text-text focus:outline-none focus:ring-2 focus:ring-primary"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-text-light dark:text-text mb-2">
+                      Motif
+                    </label>
+                    <select
+                      value={renew.motif}
+                      onChange={(e) => setRenew({ ...renew, motif: e.target.value })}
+                      className="w-full px-3 py-2 bg-background-light dark:bg-background border border-gray-300 dark:border-gray-600 rounded-lg text-text-light dark:text-text focus:outline-none focus:ring-2 focus:ring-primary"
+                    >
+                      <option value="EXPIRATION">EXPIRATION</option>
+                      <option value="PERTE">PERTE</option>
+                      <option value="DETERIORATION">DETERIORATION</option>
+                    </select>
+                  </div>
+                </div>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full bg-primary hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold py-3 px-4 rounded-lg transition-colors flex items-center justify-center gap-2"
+                >
+                  {loading ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                      Renouvellement...
+                    </>
+                  ) : (
+                    'Renouveler'
+                  )}
+                </button>
+              </form>
+            </div>
+            {result && <AlertResult {...result} />}
+          </div>
+        );
+      case "revoke":
+        return (
+          <div className="max-w-2xl">
+            <h2 className="text-2xl font-bold mb-6 text-text-light dark:text-text">Révocation de Passeport</h2>
+            <div className="bg-surface-light dark:bg-surface-dark border border-gray-200 dark:border-gray-700 rounded-xl p-6">
+              <p className="text-text-light dark:text-text mb-4">Initier une demande de révocation (validation admin requise)</p>
+              <form onSubmit={submitRevoke} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-text-light dark:text-text mb-2">
+                    HMAC Hash
+                  </label>
+                  <input
+                    type="text"
+                    value={revoke.hmac_hash}
+                    onChange={(e) => setRevoke({ ...revoke, hmac_hash: e.target.value })}
+                    className="w-full px-3 py-2 bg-background-light dark:bg-background border border-gray-300 dark:border-gray-600 rounded-lg text-text-light dark:text-text placeholder-muted-light dark:placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-text-light dark:text-text mb-2">
+                    Raison
+                  </label>
+                  <select
+                    value={revoke.raison}
+                    onChange={(e) => setRevoke({ ...revoke, raison: e.target.value })}
+                    className="w-full px-3 py-2 bg-background-light dark:bg-background border border-gray-300 dark:border-gray-600 rounded-lg text-text-light dark:text-text focus:outline-none focus:ring-2 focus:ring-primary"
+                  >
+                    <option value="VOLE">VOLÉ</option>
+                    <option value="PERDU">PERDU</option>
+                    <option value="FALSIFIE">FALSIFIÉ</option>
+                    <option value="DECES">DÉCÈS</option>
+                    <option value="JUDICIAIRE">JUDICIAIRE</option>
+                  </select>
+                </div>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full bg-primary hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold py-3 px-4 rounded-lg transition-colors flex items-center justify-center gap-2"
+                >
+                  {loading ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                      Soumission...
+                    </>
+                  ) : (
+                    'Soumettre la demande'
+                  )}
+                </button>
+              </form>
+            </div>
+            {result && <AlertResult {...result} />}
+          </div>
+        );
+      case "foreign":
+        return (
+          <div className="max-w-2xl">
+            <h2 className="text-2xl font-bold mb-6 text-text-light dark:text-text">Voyage Étranger</h2>
+            <div className="bg-surface-light dark:bg-surface-dark border border-gray-200 dark:border-gray-700 rounded-xl p-6">
+              <p className="text-text-light dark:text-text mb-4">Enregistrement des voyages de passeports étrangers (MongoDB uniquement)</p>
+              <form onSubmit={submitForeign} className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-text-light dark:text-text mb-2">
+                      Nationalité
+                    </label>
+                    <input
+                      type="text"
+                      value={foreign.nationalite}
+                      onChange={(e) => setForeign({ ...foreign, nationalite: e.target.value })}
+                      className="w-full px-3 py-2 bg-background-light dark:bg-background border border-gray-300 dark:border-gray-600 rounded-lg text-text-light dark:text-text placeholder-muted-light dark:placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-text-light dark:text-text mb-2">
+                      N° passeport étranger
+                    </label>
+                    <input
+                      type="text"
+                      value={foreign.num_passeport_etr}
+                      onChange={(e) => setForeign({ ...foreign, num_passeport_etr: e.target.value })}
+                      className="w-full px-3 py-2 bg-background-light dark:bg-background border border-gray-300 dark:border-gray-600 rounded-lg text-text-light dark:text-text placeholder-muted-light dark:placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary"
+                      required
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-text-light dark:text-text mb-2">
+                      Type de mouvement
+                    </label>
+                    <select
+                      value={foreign.type_mvt}
+                      onChange={(e) => setForeign({ ...foreign, type_mvt: e.target.value })}
+                      className="w-full px-3 py-2 bg-background-light dark:bg-background border border-gray-300 dark:border-gray-600 rounded-lg text-text-light dark:text-text focus:outline-none focus:ring-2 focus:ring-primary"
+                    >
+                      <option value="ENT">Entrée</option>
+                      <option value="SOR">Sortie</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-text-light dark:text-text mb-2">
+                      Checkpoint
+                    </label>
+                    <input
+                      type="text"
+                      value={foreign.checkpoint}
+                      onChange={(e) => setForeign({ ...foreign, checkpoint: e.target.value })}
+                      className="w-full px-3 py-2 bg-background-light dark:bg-background border border-gray-300 dark:border-gray-600 rounded-lg text-text-light dark:text-text placeholder-muted-light dark:placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary"
+                      required
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-text-light dark:text-text mb-2">
+                    Date de passage
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={foreign.date_passage}
+                    onChange={(e) => setForeign({ ...foreign, date_passage: e.target.value })}
+                    className="w-full px-3 py-2 bg-background-light dark:bg-background border border-gray-300 dark:border-gray-600 rounded-lg text-text-light dark:text-text focus:outline-none focus:ring-2 focus:ring-primary"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-text-light dark:text-text mb-2">
+                    Détails
+                  </label>
+                  <textarea
+                    value={foreign.details}
+                    onChange={(e) => setForeign({ ...foreign, details: e.target.value })}
+                    className="w-full px-3 py-2 bg-background-light dark:bg-background border border-gray-300 dark:border-gray-600 rounded-lg text-text-light dark:text-text placeholder-muted-light dark:placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary"
+                    rows="3"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full bg-primary hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold py-3 px-4 rounded-lg transition-colors flex items-center justify-center gap-2"
+                >
+                  {loading ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                      Enregistrement...
+                    </>
+                  ) : (
+                    'Enregistrer'
+                  )}
+                </button>
+              </form>
+            </div>
+            {result && <AlertResult {...result} />}
+          </div>
+        );
+      case "consult":
+        return (
+          <div className="max-w-2xl">
+            <h2 className="text-2xl font-bold mb-6 text-text-light dark:text-text">Consulter Passeport</h2>
+            <div className="bg-surface-light dark:bg-surface-dark border border-gray-200 dark:border-gray-700 rounded-xl p-6">
+              <form onSubmit={loadPassport} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-text-light dark:text-text mb-2">
+                    HMAC Hash
+                  </label>
+                  <input
+                    type="text"
+                    value={lookup}
+                    onChange={(e) => setLookup(e.target.value)}
+                    className="w-full px-3 py-2 bg-background-light dark:bg-background border border-gray-300 dark:border-gray-600 rounded-lg text-text-light dark:text-text placeholder-muted-light dark:placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary"
+                    placeholder="Entrez le hash HMAC"
+                    required
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full bg-primary hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold py-3 px-4 rounded-lg transition-colors flex items-center justify-center gap-2"
+                >
+                  {loading ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                      Recherche...
+                    </>
+                  ) : (
+                    'Charger'
+                  )}
+                </button>
+              </form>
+            </div>
+            {lookupRes && (
+              <div className="mt-6">
+                <HashDisplay hash={lookupRes.hmac_hash || lookup} label="Hash du Passeport" />
+                {lookupRes.txHash && <HashDisplay hash={lookupRes.txHash} label="Transaction Blockchain" />}
+              </div>
+            )}
+            {result && <AlertResult {...result} />}
+          </div>
+        );
+      default:
+        return <div>Page non trouvée</div>;
+    }
+  };
+
+  const navigationItems = [
+    { key: 'create', icon: '📋', label: 'Créer Passeport' },
+    { key: 'travel', icon: '✈️', label: 'Enregistrer Voyage' },
+    { key: 'renew', icon: '🔄', label: 'Renouveler' },
+    { key: 'revoke', icon: '🚫', label: 'Révoquer' },
+    { key: 'foreign', icon: '🌍', label: 'Étranger' },
+    { key: 'consult', icon: '🔍', label: 'Consulter' },
+  ];
+
   return (
-    <div className="layout">
-      <header className="topbar">
-        <div>
-          <strong>Douane</strong>
-          <span className="muted"> · {agent?.identifiant}</span>
-        </div>
-        <nav className="tabs">
-          {["create", "travel", "renew", "revoke", "foreign", "consult"].map((t) => (
-            <button key={t} type="button" className={tab === t ? "active" : ""} onClick={() => setTab(t)}>
-              {t}
-            </button>
-          ))}
-        </nav>
-        <button type="button" className="ghost" onClick={doLogout}>
-          Déconnexion
-        </button>
-      </header>
-      <main className="main">
-        {err && <p className="error banner">{err}</p>}
-        {msg && <pre className="success banner">{msg}</pre>}
-        {tab === "create" && <PassportForm />}
-        {tab === "travel" && <TravelLog />}
-        {tab === "renew" && (
-          <div className="card">
-            <h2>Renouvellement</h2>
-            <form className="grid-form" onSubmit={submitRenew}>
-              <label>
-                Ancien n° passeport
-                <input
-                  value={renew.num_passeport}
-                  onChange={(e) => setRenew({ ...renew, num_passeport: e.target.value })}
-                  required
-                />
-              </label>
-              <label className="full">
-                Ancien MRZ
-                <input value={renew.mrz} onChange={(e) => setRenew({ ...renew, mrz: e.target.value })} required />
-              </label>
-              <label>
-                Nouveau n° passeport
-                <input
-                  value={renew.nouveau_num_passeport}
-                  onChange={(e) => setRenew({ ...renew, nouveau_num_passeport: e.target.value })}
-                  required
-                />
-              </label>
-              <label className="full">
-                Nouveau MRZ
-                <input
-                  value={renew.nouveau_mrz}
-                  onChange={(e) => setRenew({ ...renew, nouveau_mrz: e.target.value })}
-                  required
-                />
-              </label>
-              <label>
-                Nouvelle expiration
-                <input
-                  type="date"
-                  value={renew.date_expiration}
-                  onChange={(e) => setRenew({ ...renew, date_expiration: e.target.value })}
-                  required
-                />
-              </label>
-              <label>
-                Motif
-                <select value={renew.motif} onChange={(e) => setRenew({ ...renew, motif: e.target.value })}>
-                  <option value="EXPIRATION">EXPIRATION</option>
-                  <option value="PERTE">PERTE</option>
-                  <option value="DETERIORATION">DETERIORATION</option>
-                </select>
-              </label>
-              <button type="submit" className="full">
-                Renouveler
-              </button>
-            </form>
-          </div>
-        )}
-        {tab === "revoke" && (
-          <div className="card">
-            <h2>Initier révocation (validation admin requise)</h2>
-            <form className="grid-form" onSubmit={submitRevoke}>
-              <label className="full">
-                hmac_hash
-                <input
-                  value={revoke.hmac_hash}
-                  onChange={(e) => setRevoke({ ...revoke, hmac_hash: e.target.value })}
-                  required
-                />
-              </label>
-              <label>
-                Raison
-                <select value={revoke.raison} onChange={(e) => setRevoke({ ...revoke, raison: e.target.value })}>
-                  <option value="VOLE">VOLÉ</option>
-                  <option value="PERDU">PERDU</option>
-                  <option value="FALSIFIE">FALSIFIÉ</option>
-                  <option value="DECES">DÉCÈS</option>
-                  <option value="JUDICIAIRE">JUDICIAIRE</option>
-                </select>
-              </label>
-              <button type="submit">Soumettre la demande</button>
-            </form>
-          </div>
-        )}
-        {tab === "foreign" && (
-          <div className="card">
-            <h2>Passeport étranger (MongoDB uniquement)</h2>
-            <form className="grid-form" onSubmit={submitForeign}>
-              <label>
-                Nationalité
-                <input
-                  value={foreign.nationalite}
-                  onChange={(e) => setForeign({ ...foreign, nationalite: e.target.value })}
-                  required
-                />
-              </label>
-              <label>
-                N° passeport étranger
-                <input
-                  value={foreign.num_passeport_etr}
-                  onChange={(e) => setForeign({ ...foreign, num_passeport_etr: e.target.value })}
-                  required
-                />
-              </label>
-              <label>
-                Type
-                <select value={foreign.type_mvt} onChange={(e) => setForeign({ ...foreign, type_mvt: e.target.value })}>
-                  <option value="ENT">ENT</option>
-                  <option value="SOR">SOR</option>
-                </select>
-              </label>
-              <label className="full">
-                Checkpoint
-                <input
-                  value={foreign.checkpoint}
-                  onChange={(e) => setForeign({ ...foreign, checkpoint: e.target.value })}
-                  required
-                />
-              </label>
-              <label>
-                Date passage
-                <input
-                  type="datetime-local"
-                  value={foreign.date_passage}
-                  onChange={(e) => setForeign({ ...foreign, date_passage: e.target.value })}
-                  required
-                />
-              </label>
-              <label className="full">
-                Détails
-                <input value={foreign.details} onChange={(e) => setForeign({ ...foreign, details: e.target.value })} />
-              </label>
-              <button type="submit">Enregistrer</button>
-            </form>
-          </div>
-        )}
-        {tab === "consult" && (
-          <div className="card">
-            <h2>Consulter par HMAC</h2>
-            <form className="row" onSubmit={loadPassport}>
-              <input value={lookup} onChange={(e) => setLookup(e.target.value)} placeholder="hmac_hash" required />
-              <button type="submit">Charger</button>
-            </form>
-            {lookupRes && <pre className="result">{JSON.stringify(lookupRes, null, 2)}</pre>}
-          </div>
-        )}
-      </main>
-    </div>
+    <SidebarLayout
+      role="DOUANE"
+      agentName={agent?.identifiant}
+      onLogout={doLogout}
+      navigationItems={navigationItems}
+      onNavigate={setCurrentPage}
+    >
+      {renderContent()}
+    </SidebarLayout>
   );
 }
+

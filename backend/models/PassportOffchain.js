@@ -5,6 +5,8 @@ const passportOffchainSchema = new mongoose.Schema(
     hmac_hash: { type: String, required: true, unique: true },
     nom: { type: String, required: true },
     prenom: { type: String, required: true },
+    num_passeport: { type: String, required: true },
+    mrz: { type: String, required: true },
     date_naissance: { type: Date, required: true },
     lieu_naissance: { type: String, required: true },
     cin: { type: String, required: true, unique: true },

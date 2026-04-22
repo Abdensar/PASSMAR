@@ -1,27 +1,38 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, formatError } from "../services/apiClient";
+import SidebarLayout from "../components/SidebarLayout";
+import AlertResult from "../components/AlertResult";
+import HashDisplay from "../components/HashDisplay";
 import AuditTable from "../components/AuditTable";
+import toast from 'react-hot-toast';
 
 export default function PanelAdmin({ agent, onLogout }) {
   const nav = useNavigate();
+  const [currentPage, setCurrentPage] = useState("agents");
   const [agents, setAgents] = useState([]);
   const [pending, setPending] = useState([]);
   const [stats, setStats] = useState(null);
-  const [tab, setTab] = useState("revoke");
-  const [err, setErr] = useState("");
-  const [msg, setMsg] = useState("");
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [showCreateModal, setShowCreateModal] = useState(false);
   const [newAgent, setNewAgent] = useState({
     identifiant: "",
     password: "",
     role: "DOUANE",
-    eth_address: "",
     type_autorite: "DOUANE",
     nom_autorite: "Poste frontière",
   });
   const [ban, setBan] = useState({ hmac_hash: "", interdiction: true });
   const [confirmId, setConfirmId] = useState("");
   const [reject, setReject] = useState({ id_demande: "", notes: "" });
+
+  const navigationItems = [
+    { key: 'agents', icon: '👥', label: 'Agents' },
+    { key: 'revocations', icon: '⚖️', label: 'Révocations' },
+    { key: 'audit', icon: '📊', label: 'Audit Log' },
+    { key: 'stats', icon: '📈', label: 'Statistiques' },
+  ];
 
   async function doLogout() {
     await api.logout();
@@ -30,7 +41,7 @@ export default function PanelAdmin({ agent, onLogout }) {
   }
 
   async function refreshLists() {
-    setErr("");
+    setLoading(true);
     try {
       const [a, p, s] = await Promise.all([
         api.get("/admin/agents"),
@@ -41,7 +52,9 @@ export default function PanelAdmin({ agent, onLogout }) {
       setPending(p.items || []);
       setStats(s);
     } catch (ex) {
-      setErr(formatError(ex));
+      toast.error(formatError(ex));
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -52,250 +65,331 @@ export default function PanelAdmin({ agent, onLogout }) {
 
   async function createAgent(e) {
     e.preventDefault();
-    setErr("");
-    setMsg("");
+    setResult(null);
+    setLoading(true);
     try {
       const out = await api.post("/admin/agents", newAgent);
-      setMsg(
-        `Agent créé : ${out.agent?.identifiant}.` +
-          (out.otpauth_url ? ` OTPAuth URL (ADMIN) : ${out.otpauth_url}` : "")
-      );
+      setResult({ code: 200, message: `Agent créé : ${out.agent?.identifiant}`, data: out });
+      toast.success("Agent créé avec succès !");
+      setShowCreateModal(false);
+      setNewAgent({
+        identifiant: "",
+        password: "",
+        role: "DOUANE",
+        type_autorite: "DOUANE",
+        nom_autorite: "Poste frontière",
+      });
       refreshLists();
     } catch (ex) {
-      setErr(formatError(ex));
+      setResult({ code: ex.response?.status || 500, message: formatError(ex) });
+      toast.error(formatError(ex));
+    } finally {
+      setLoading(false);
     }
   }
 
   async function toggleAgent(id, is_active) {
-    setErr("");
+    setLoading(true);
     try {
       await api.patch(`/admin/agents/${id}`, { is_active });
+      toast.success(`Agent ${is_active ? 'activé' : 'désactivé'} !`);
       refreshLists();
     } catch (ex) {
-      setErr(formatError(ex));
+      toast.error(formatError(ex));
+    } finally {
+      setLoading(false);
     }
   }
 
-  async function confirmRevoke(e) {
-    e.preventDefault();
-    setErr("");
-    setMsg("");
+  async function confirmRevoke(id) {
+    setResult(null);
+    setLoading(true);
     try {
-      const out = await api.post("/passport/revoke/confirm", { id_demande: confirmId });
-      setMsg(JSON.stringify(out, null, 2));
+      const out = await api.post("/passport/revoke/confirm", { id_demande: id });
+      setResult({ code: 200, message: "Révocation confirmée", data: out });
+      toast.success("Révocation confirmée !");
       refreshLists();
     } catch (ex) {
-      setErr(formatError(ex));
+      setResult({ code: ex.response?.status || 500, message: formatError(ex) });
+      toast.error(formatError(ex));
+    } finally {
+      setLoading(false);
     }
   }
 
-  async function rejectRevoke(e) {
-    e.preventDefault();
-    setErr("");
-    setMsg("");
+  async function rejectRevoke(id, notes) {
+    setResult(null);
+    setLoading(true);
     try {
-      const out = await api.post("/passport/revoke/reject", reject);
-      setMsg(JSON.stringify(out, null, 2));
+      const out = await api.post("/passport/revoke/reject", { id_demande: id, notes });
+      setResult({ code: 200, message: "Révocation rejetée", data: out });
+      toast.success("Révocation rejetée !");
       refreshLists();
     } catch (ex) {
-      setErr(formatError(ex));
+      setResult({ code: ex.response?.status || 500, message: formatError(ex) });
+      toast.error(formatError(ex));
+    } finally {
+      setLoading(false);
     }
   }
 
   async function applyBan(e) {
     e.preventDefault();
-    setErr("");
-    setMsg("");
+    setResult(null);
+    setLoading(true);
     try {
       const out = await api.patch("/passport/travel-ban", ban);
-      setMsg(JSON.stringify(out, null, 2));
+      setResult({ code: 200, message: "Interdiction appliquée", data: out });
+      toast.success("Interdiction appliquée !");
     } catch (ex) {
-      setErr(formatError(ex));
+      setResult({ code: ex.response?.status || 500, message: formatError(ex) });
+      toast.error(formatError(ex));
+    } finally {
+      setLoading(false);
     }
   }
 
-  return (
-    <div className="layout">
-      <header className="topbar">
-        <div>
-          <strong>Administration</strong>
-          <span className="muted"> · {agent?.identifiant}</span>
-        </div>
-        <nav className="tabs">
-          {["revoke", "agents", "ban", "audit", "stats"].map((t) => (
-            <button key={t} type="button" className={tab === t ? "active" : ""} onClick={() => setTab(t)}>
-              {t}
-            </button>
-          ))}
-        </nav>
-        <button type="button" className="ghost" onClick={doLogout}>
-          Déconnexion
-        </button>
-      </header>
-      <main className="main">
-        {err && <p className="error banner">{err}</p>}
-        {msg && <pre className="success banner">{msg}</pre>}
-        {tab === "revoke" && (
-          <div className="stack">
-            <div className="card">
-              <h2>Demandes de révocation en attente</h2>
-              <button type="button" className="ghost" onClick={refreshLists}>
+  const renderContent = () => {
+    switch (currentPage) {
+      case "agents":
+        return (
+          <div className="max-w-6xl">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-2xl font-bold text-white">Gestion des Agents</h2>
+              <button
+                onClick={() => setShowCreateModal(true)}
+                className="bg-primary hover:bg-primary/90 text-white font-semibold py-2 px-4 rounded-lg transition-colors"
+              >
+                Créer Agent
+              </button>
+            </div>
+            <div className="bg-surface-light dark:bg-surface-dark border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden">
+              <table className="w-full">
+                <thead className="bg-[#FAE19E] dark:bg-gray-700">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-text-light dark:text-text">Identifiant</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-text-light dark:text-text">Rôle</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-text-light dark:text-text">Autorité</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-text-light dark:text-text">Actif</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-text-light dark:text-text">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-200 dark:divide-gray-600 bg-[#FDF6E3]/30 dark:bg-transparent">
+                  {agents.map((ag) => (
+                    <tr key={ag._id} className="hover:bg-[#FAE19E]/20 dark:hover:bg-surface">
+                      <td className="px-4 py-3 text-sm text-text-light dark:text-text">{ag.identifiant}</td>
+                      <td className="px-4 py-3 text-sm text-text-light dark:text-text">{ag.role}</td>
+                      <td className="px-4 py-3 text-sm text-text-light dark:text-text">{ag.id_autorite?.nom_autorite}</td>
+                      <td className="px-4 py-3 text-sm">
+                        <span className={`px-2 py-1 rounded-full text-xs ${ag.is_active ? 'bg-valid-light/20 dark:bg-valid/20 text-valid-light dark:text-valid' : 'bg-red-500/20 text-red-400 dark:text-red-300'}`}>
+                          {ag.is_active ? 'Actif' : 'Inactif'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-sm">
+                        <button
+                          onClick={() => toggleAgent(ag._id, !ag.is_active)}
+                          className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
+                            ag.is_active
+                              ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30 dark:text-red-300'
+                              : 'bg-valid-light/20 dark:bg-valid/20 text-valid-light dark:text-valid hover:bg-valid-light/30 dark:hover:bg-valid/30'
+                          }`}
+                        >
+                          {ag.is_active ? 'Désactiver' : 'Activer'}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {result && <AlertResult {...result} />}
+          </div>
+        );
+      case "revocations":
+        return (
+          <div className="max-w-4xl">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-2xl font-bold text-white">Demandes de Révocation</h2>
+              <button
+                onClick={refreshLists}
+                disabled={loading}
+                className="bg-blockchain hover:bg-blockchain/90 disabled:opacity-50 text-white font-semibold py-2 px-4 rounded-lg transition-colors"
+              >
                 Rafraîchir
               </button>
-              <ul className="list">
-                {pending.map((r) => (
-                  <li key={r._id}>
-                    <code>{r._id}</code> — {r.hmac_hash} — {r.raison}
-                  </li>
-                ))}
-              </ul>
-              <form className="row" onSubmit={confirmRevoke}>
-                <input
-                  placeholder="id_demande à confirmer"
-                  value={confirmId}
-                  onChange={(e) => setConfirmId(e.target.value)}
-                  required
-                />
-                <button type="submit">Confirmer (blockchain)</button>
-              </form>
-              <form className="grid-form" onSubmit={rejectRevoke}>
-                <label className="full">
-                  Rejeter id_demande
-                  <input
-                    value={reject.id_demande}
-                    onChange={(e) => setReject({ ...reject, id_demande: e.target.value })}
-                    required
-                  />
-                </label>
-                <label className="full">
-                  Notes
-                  <input value={reject.notes} onChange={(e) => setReject({ ...reject, notes: e.target.value })} />
-                </label>
-                <button type="submit">Rejeter</button>
-              </form>
+            </div>
+            <div className="space-y-4">
+              {pending.map((r) => (
+                <div key={r._id} className="bg-gray-800/50 border border-gray-700 rounded-xl p-6">
+                  <div className="flex justify-between items-start mb-4">
+                    <div>
+                      <h3 className="text-lg font-semibold text-white mb-2">Demande #{r._id}</h3>
+                      <p className="text-gray-300 mb-2">Raison: {r.raison}</p>
+                      <HashDisplay hash={r.hmac_hash} label="Hash du Passeport" />
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => confirmRevoke(r._id)}
+                        disabled={loading}
+                        className="bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white font-semibold py-2 px-4 rounded-lg transition-colors"
+                      >
+                        Confirmer
+                      </button>
+                      <button
+                        onClick={() => rejectRevoke(r._id, 'Rejetée par admin')}
+                        disabled={loading}
+                        className="bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white font-semibold py-2 px-4 rounded-lg transition-colors"
+                      >
+                        Rejeter
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {pending.length === 0 && (
+                <div className="text-center py-8">
+                  <p className="text-gray-400">Aucune demande de révocation en attente</p>
+                </div>
+              )}
+            </div>
+            {result && <AlertResult {...result} />}
+          </div>
+        );
+      case "audit":
+        return <AuditTable />;
+      case "stats":
+        return (
+          <div className="max-w-6xl">
+            <h2 className="text-2xl font-bold text-text-light dark:text-text mb-6">Statistiques</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
+              <div className="bg-[#FDF6E3]/80 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700 rounded-xl p-6">
+                <h3 className="text-lg font-semibold text-text-light dark:text-text mb-2">Total Passeports</h3>
+                <p className="text-3xl font-bold text-primary">{stats?.passports || 0}</p>
+              </div>
+              <div className="bg-[#FDF6E3]/80 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700 rounded-xl p-6">
+                <h3 className="text-lg font-semibold text-text-light dark:text-text mb-2">Total Voyages</h3>
+                <p className="text-3xl font-bold text-valid">{stats?.voyages || 0}</p>
+              </div>
+              <div className="bg-[#FDF6E3]/80 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700 rounded-xl p-6">
+                <h3 className="text-lg font-semibold text-text-light dark:text-text mb-2">Logs d’Audit</h3>
+                <p className="text-3xl font-bold text-red-500">{stats?.audit_entries || 0}</p>
+              </div>
+              <div className="bg-[#FDF6E3]/80 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700 rounded-xl p-6">
+                <h3 className="text-lg font-semibold text-text-light dark:text-text mb-2">Total Agents</h3>
+                <p className="text-3xl font-bold text-gold">{stats?.agents || 0}</p>
+              </div>
+            </div>
+            <div className="bg-[#FDF6E3]/80 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700 rounded-xl p-6">
+              <h3 className="text-lg font-semibold text-text-light dark:text-text mb-4">Détails</h3>
+              <pre className="text-xs text-text-light dark:text-gray-300 bg-[#E8D5B7]/50 dark:bg-gray-900 p-4 rounded overflow-auto">
+                {JSON.stringify(stats, null, 2)}
+              </pre>
             </div>
           </div>
-        )}
-        {tab === "agents" && (
-          <div className="card">
-            <h2>Agents</h2>
-            <button type="button" className="ghost" onClick={refreshLists}>
-              Rafraîchir
-            </button>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Identifiant</th>
-                  <th>Rôle</th>
-                  <th>Actif</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {agents.map((ag) => (
-                  <tr key={ag._id}>
-                    <td>{ag.identifiant}</td>
-                    <td>{ag.role}</td>
-                    <td>{ag.is_active ? "oui" : "non"}</td>
-                    <td>
-                      <button type="button" onClick={() => toggleAgent(ag._id, !ag.is_active)}>
-                        {ag.is_active ? "Désactiver" : "Activer"}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <h3>Créer un agent</h3>
-            <form className="grid-form" onSubmit={createAgent}>
-              <label>
-                Identifiant
+        );
+      default:
+        return <div>Page non trouvée</div>;
+    }
+  };
+
+  return (
+    <>
+      <SidebarLayout
+        role="ADMIN"
+        agentName={agent?.identifiant}
+        onLogout={doLogout}
+        navigationItems={navigationItems}
+        onNavigate={setCurrentPage}
+      >
+        {renderContent()}
+      </SidebarLayout>
+
+      {/* Create Agent Modal */}
+      {showCreateModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-gray-800 border border-gray-700 rounded-xl p-6 w-full max-w-md">
+            <h3 className="text-lg font-semibold text-white mb-4">Créer un Agent</h3>
+            <form onSubmit={createAgent} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Identifiant</label>
                 <input
+                  type="text"
                   value={newAgent.identifiant}
                   onChange={(e) => setNewAgent({ ...newAgent, identifiant: e.target.value })}
+                  className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary"
                   required
                 />
-              </label>
-              <label>
-                Mot de passe
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Mot de passe</label>
                 <input
                   type="password"
                   value={newAgent.password}
                   onChange={(e) => setNewAgent({ ...newAgent, password: e.target.value })}
+                  className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary"
                   required
                 />
-              </label>
-              <label>
-                Rôle
-                <select value={newAgent.role} onChange={(e) => setNewAgent({ ...newAgent, role: e.target.value })}>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Rôle</label>
+                <select
+                  value={newAgent.role}
+                  onChange={(e) => setNewAgent({ ...newAgent, role: e.target.value })}
+                  className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary"
+                >
                   <option value="DOUANE">DOUANE</option>
                   <option value="POLICE">POLICE</option>
                   <option value="ADMIN">ADMIN</option>
                 </select>
-              </label>
-              <label>
-                Adresse Ethereum
-                <input
-                  value={newAgent.eth_address}
-                  onChange={(e) => setNewAgent({ ...newAgent, eth_address: e.target.value })}
-                  required
-                />
-              </label>
-              <label>
-                Type autorité
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Type autorité</label>
                 <select
                   value={newAgent.type_autorite}
                   onChange={(e) => setNewAgent({ ...newAgent, type_autorite: e.target.value })}
+                  className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary"
                 >
                   <option value="DOUANE">DOUANE</option>
                   <option value="POLICE">POLICE</option>
                   <option value="ADMIN">ADMIN</option>
                 </select>
-              </label>
-              <label className="full">
-                Nom autorité
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Nom autorité</label>
                 <input
+                  type="text"
                   value={newAgent.nom_autorite}
                   onChange={(e) => setNewAgent({ ...newAgent, nom_autorite: e.target.value })}
+                  className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary"
                 />
-              </label>
-              <button type="submit">Créer</button>
-            </form>
-          </div>
-        )}
-        {tab === "ban" && (
-          <div className="card">
-            <h2>Interdiction de sortie</h2>
-            <form className="grid-form" onSubmit={applyBan}>
-              <label className="full">
-                hmac_hash
-                <input value={ban.hmac_hash} onChange={(e) => setBan({ ...ban, hmac_hash: e.target.value })} required />
-              </label>
-              <label>
-                Interdiction
-                <select
-                  value={ban.interdiction ? "true" : "false"}
-                  onChange={(e) => setBan({ ...ban, interdiction: e.target.value === "true" })}
+              </div>
+              <div className="flex gap-3 pt-4">
+                <button
+                  type="button"
+                  onClick={() => setShowCreateModal(false)}
+                  className="flex-1 bg-gray-600 hover:bg-gray-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors"
                 >
-                  <option value="true">Oui</option>
-                  <option value="false">Non</option>
-                </select>
-              </label>
-              <button type="submit">Appliquer sur la chaîne</button>
+                  Annuler
+                </button>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="flex-1 bg-primary hover:bg-primary/90 disabled:opacity-50 text-white font-semibold py-2 px-4 rounded-lg transition-colors flex items-center justify-center gap-2"
+                >
+                  {loading ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                      Création...
+                    </>
+                  ) : (
+                    'Créer'
+                  )}
+                </button>
+              </div>
             </form>
           </div>
-        )}
-        {tab === "audit" && <AuditTable />}
-        {tab === "stats" && (
-          <div className="card">
-            <h2>Statistiques</h2>
-            <button type="button" className="ghost" onClick={refreshLists}>
-              Rafraîchir
-            </button>
-            <pre className="result">{JSON.stringify(stats, null, 2)}</pre>
-          </div>
-        )}
-      </main>
-    </div>
+        </div>
+      )}
+    </>
   );
 }

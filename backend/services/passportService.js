@@ -85,6 +85,8 @@ async function createPassport(payload, agent) {
       hmac_hash,
       nom,
       prenom,
+      num_passeport: String(num_passeport).trim(),
+      mrz: String(mrz).trim(),
       date_naissance,
       lieu_naissance,
       cin: String(cin).trim(),
@@ -218,6 +220,7 @@ async function getByHashForAgent(hmac_hash) {
   }
   const row = bc.data;
   const statutEffectif = row.statutEffectif ?? row[8];
+  const renewed = typeof row.renewed === "boolean" ? row.renewed : row[7];
   const copy = {
     ...off,
     photo_url: decryptField(off.photo_url),
@@ -240,6 +243,7 @@ async function getByHashForAgent(hmac_hash) {
           : row.dateExpiration ?? row[5],
       eth_agent_emetteur: row.ethAgentEmetteur ?? row[6],
       raison_revocation: row.raisonRevocation ?? row[3],
+      renewed: Boolean(renewed),
     },
   };
 }
@@ -284,9 +288,27 @@ async function renewPassport(payload, agent) {
     blockchainService.renewOnChain(oldHash, newHash, newDateEmission, newDateExpiration, ethAgent)
   );
   if (!bc.ok) {
+    const chainError = String(bc.error || "");
     const err = new Error("BLOCKCHAIN_TX_FAILED");
     err.status = 503;
-    err.details = bc.error;
+    err.details = chainError;
+
+    if (chainError.includes("ALREADY_RENEWED")) {
+      err.message = "PASSEPORT_DEJA_RENOUVELE";
+      err.status = 409;
+      err.details =
+        "Ce passeport a deja ete renouvelle. Utilisez le passeport actif le plus recent.";
+    } else if (chainError.includes("OLD_EXPIRED")) {
+      err.message = "ANCIEN_PASSEPORT_EXPIRE";
+      err.status = 409;
+      err.details =
+        "L'ancien passeport est expire on-chain. Renouvelez a partir du passeport actif courant.";
+    } else if (chainError.includes("OLD_NOT_ACTIF")) {
+      err.message = "ANCIEN_PASSEPORT_NON_ACTIF";
+      err.status = 409;
+      err.details =
+        "L'ancien passeport n'est plus ACTIF on-chain (revoque/perdu/invalide).";
+    }
     throw err;
   }
 
@@ -304,6 +326,8 @@ async function renewPassport(payload, agent) {
     hmac_hash: newHash,
     nom: off.nom,
     prenom: off.prenom,
+    num_passeport: nouveau_num_passeport,
+    mrz: nouveau_mrz,
     date_naissance: off.date_naissance,
     lieu_naissance: off.lieu_naissance,
     cin: off.cin,
