@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, formatError } from "../services/apiClient";
 import PassportForm from "../components/PassportForm";
@@ -6,6 +6,7 @@ import TravelLog from "../components/TravelLog";
 import SidebarLayout from "../components/SidebarLayout";
 import AlertResult from "../components/AlertResult";
 import HashDisplay from "../components/HashDisplay";
+import PassportDetailCards from "../components/PassportDetailCards";
 import toast from 'react-hot-toast';
 
 export default function DashboardDouane({ agent, onLogout }) {
@@ -28,7 +29,8 @@ export default function DashboardDouane({ agent, onLogout }) {
     date_passage: "",
     details: "",
   });
-  const [lookup, setLookup] = useState("");
+  const [consultNum, setConsultNum] = useState("");
+  const [consultMrz, setConsultMrz] = useState("");
   const [lookupRes, setLookupRes] = useState(null);
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -52,7 +54,7 @@ export default function DashboardDouane({ agent, onLogout }) {
       setResult({ code: 200, message: "Passeport renouvelé avec succès", data: out });
       toast.success("Passeport renouvelé !");
     } catch (ex) {
-      setResult({ code: ex.response?.status || 500, message: formatError(ex) });
+      setResult({ code: ex.status || 500, message: formatError(ex) });
       toast.error(formatError(ex));
     } finally {
       setLoading(false);
@@ -68,7 +70,7 @@ export default function DashboardDouane({ agent, onLogout }) {
       setResult({ code: 200, message: "Demande de révocation initiée", data: out });
       toast.success("Demande de révocation soumise !");
     } catch (ex) {
-      setResult({ code: ex.response?.status || 500, message: formatError(ex) });
+      setResult({ code: ex.status || 500, message: formatError(ex) });
       toast.error(formatError(ex));
     } finally {
       setLoading(false);
@@ -88,29 +90,47 @@ export default function DashboardDouane({ agent, onLogout }) {
       setResult({ code: 200, message: "Voyage étranger enregistré", data: out });
       toast.success("Voyage enregistré !");
     } catch (ex) {
-      setResult({ code: ex.response?.status || 500, message: formatError(ex) });
+      setResult({ code: ex.status || 500, message: formatError(ex) });
       toast.error(formatError(ex));
     } finally {
       setLoading(false);
     }
   }
 
-  async function loadPassport(e) {
-    e.preventDefault();
+  const loadConsultByCredentials = useCallback(async (n, m, opts = {}) => {
+    const { silentToast = false } = opts;
+    const nt = String(n ?? "").trim();
+    const mt = String(m ?? "").trim();
     setResult(null);
     setLookupRes(null);
     setLoading(true);
     try {
-      const out = await api.get(`/passport/${encodeURIComponent(lookup)}`);
+      const out = await api.lookupPassport(nt, mt);
       setLookupRes(out);
-      setResult({ code: 200, message: "Passeport trouvé", data: out });
+      setResult({ code: 200, message: "Passeport trouvé" });
+      if (!silentToast) toast.success("Fiche passeport chargée");
     } catch (ex) {
-      setResult({ code: ex.response?.status || 500, message: formatError(ex) });
+      setResult({ code: ex.status || 500, message: formatError(ex) });
       toast.error(formatError(ex));
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  async function loadPassport(e) {
+    e.preventDefault();
+    await loadConsultByCredentials(consultNum, consultMrz);
   }
+
+  const onSelectPassportVersionConsult = useCallback(
+    async ({ num_passeport, mrz: mrzVal }) => {
+      setConsultNum(String(num_passeport ?? ""));
+      setConsultMrz(String(mrzVal ?? ""));
+      await loadConsultByCredentials(num_passeport, mrzVal, { silentToast: true });
+      toast.success("Fiche de la version sélectionnée");
+    },
+    [loadConsultByCredentials]
+  );
 
   const renderContent = () => {
     switch (currentPage) {
@@ -219,6 +239,12 @@ export default function DashboardDouane({ agent, onLogout }) {
               </form>
             </div>
             {result && <AlertResult {...result} />}
+            {result?.data?.nouveau_hmac_hash && (
+              <div className="mt-4 space-y-2">
+                <HashDisplay hash={result.data.nouveau_hmac_hash} label="Nouveau hash (passeport actif)" />
+                {result.data.tx_hash && <HashDisplay hash={result.data.tx_hash} label="Transaction renouvellement" />}
+              </div>
+            )}
           </div>
         );
       case "revoke":
@@ -379,20 +405,35 @@ export default function DashboardDouane({ agent, onLogout }) {
         );
       case "consult":
         return (
-          <div className="max-w-2xl">
-            <h2 className="text-2xl font-bold mb-6 text-text-light dark:text-text">Consulter Passeport</h2>
+          <div className="max-w-4xl">
+            <h2 className="text-2xl font-bold mb-2 text-text-light dark:text-text">Consulter un passeport</h2>
+            <p className="text-sm text-muted-light dark:text-muted mb-6">
+              Saisissez le numéro et le MRZ lus sur le document — pas besoin du hash HMAC.
+            </p>
             <div className="bg-surface-light dark:bg-surface-dark border border-gray-200 dark:border-gray-700 rounded-xl p-6">
               <form onSubmit={loadPassport} className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-text-light dark:text-text mb-2">
-                    HMAC Hash
+                    N° passeport
                   </label>
                   <input
                     type="text"
-                    value={lookup}
-                    onChange={(e) => setLookup(e.target.value)}
-                    className="w-full px-3 py-2 bg-background-light dark:bg-background border border-gray-300 dark:border-gray-600 rounded-lg text-text-light dark:text-text placeholder-muted-light dark:placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary"
-                    placeholder="Entrez le hash HMAC"
+                    value={consultNum}
+                    onChange={(e) => setConsultNum(e.target.value)}
+                    className="w-full px-3 py-2 bg-background-light dark:bg-background border border-gray-300 dark:border-gray-600 rounded-lg text-text-light dark:text-text focus:outline-none focus:ring-2 focus:ring-primary"
+                    placeholder="Ex. MA0012345678"
+                    autoComplete="off"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-text-light dark:text-text mb-2">MRZ</label>
+                  <input
+                    type="text"
+                    value={consultMrz}
+                    onChange={(e) => setConsultMrz(e.target.value)}
+                    className="w-full px-3 py-2 bg-background-light dark:bg-background border border-gray-300 dark:border-gray-600 rounded-lg font-mono text-sm text-text-light dark:text-text focus:outline-none focus:ring-2 focus:ring-primary"
+                    placeholder="Ligne MRZ du document"
                     required
                   />
                 </div>
@@ -407,18 +448,15 @@ export default function DashboardDouane({ agent, onLogout }) {
                       Recherche...
                     </>
                   ) : (
-                    'Charger'
+                    "Afficher la fiche"
                   )}
                 </button>
               </form>
             </div>
             {lookupRes && (
-              <div className="mt-6">
-                <HashDisplay hash={lookupRes.hmac_hash || lookup} label="Hash du Passeport" />
-                {lookupRes.txHash && <HashDisplay hash={lookupRes.txHash} label="Transaction Blockchain" />}
-              </div>
+              <PassportDetailCards data={lookupRes} onSelectPassportVersion={onSelectPassportVersionConsult} />
             )}
-            {result && <AlertResult {...result} />}
+            {result && result.code !== 200 && <AlertResult {...result} />}
           </div>
         );
       default:

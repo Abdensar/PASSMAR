@@ -37,6 +37,11 @@ export const api = {
   me: () => request("/auth/me", { method: "GET" }),
   login: (body) => request("/auth/login", { method: "POST", body: JSON.stringify(body) }),
   refresh: () => request("/auth/refresh", { method: "POST" }),
+  /** Consulter passeport complet par numéro + MRZ (DOUANE / POLICE). */
+  lookupPassport: (num, mrz) => {
+    const q = new URLSearchParams({ num, mrz }).toString();
+    return request(`/passport/lookup?${q}`, { method: "GET" });
+  },
 };
 
 export function formatError(e) {

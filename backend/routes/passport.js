@@ -78,6 +78,40 @@ router.get("/verify", authenticate, requireRoles("DOUANE", "POLICE"), verifyLimi
   }
 });
 
+/** Consulter le passeport complet (off-chain + on-chain + cycle de vie) par numéro + MRZ — même logique métier que par hash. */
+router.get("/lookup", authenticate, requireRoles("DOUANE", "POLICE"), verifyLimiter, async (req, res) => {
+  const ip = req.ip || "";
+  const ua = req.get("user-agent") || "";
+  const { num, mrz } = req.query;
+  let target = "";
+  try {
+    const data = await passportService.getPassportByCredentials(num, mrz);
+    target = data?.offchain?.hmac_hash || "";
+    await auditService.log({
+      id_agent: req.agent._id,
+      action: auditService.ACTIONS.GET_PASSPORT,
+      target_hash: target,
+      ip_address: ip,
+      user_agent: ua,
+      resultat: "SUCCESS",
+      details: "lookup",
+    });
+    return res.json(data);
+  } catch (e) {
+    await auditService.log({
+      id_agent: req.agent._id,
+      action: auditService.ACTIONS.GET_PASSPORT,
+      target_hash: target,
+      ip_address: ip,
+      user_agent: ua,
+      resultat: "FAILED",
+      details: e.message,
+    });
+    const code = e.status || 500;
+    return res.status(code).json({ error: e.message, details: e.details });
+  }
+});
+
 router.post("/renew", authenticate, requireRoles("DOUANE"), defaultWriteLimiter, async (req, res) => {
   const ip = req.ip || "";
   const ua = req.get("user-agent") || "";
@@ -226,7 +260,7 @@ router.patch("/travel-ban", authenticate, requireRoles("ADMIN"), defaultWriteLim
   }
 });
 
-const RESERVED_HASH_SEGMENTS = new Set(["travel", "foreign-travel", "renew", "create"]);
+const RESERVED_HASH_SEGMENTS = new Set(["travel", "foreign-travel", "renew", "create", "lookup", "verify"]);
 
 router.get("/:hash", authenticate, requireRoles("DOUANE", "POLICE"), async (req, res) => {
   const ip = req.ip || "";

@@ -29,6 +29,27 @@ async function initiateRevoke({ hmac_hash, raison }, agent) {
     err.status = 404;
     throw err;
   }
+  if (off.is_current === false) {
+    const err = new Error("PASSEPORT_NON_ACTIF_OFFCHAIN");
+    err.status = 409;
+    err.details = off.superseded_by
+      ? `Initiez la révocation sur le passeport courant (hash ${off.superseded_by}).`
+      : "Ce passeport n'est plus la version courante.";
+    throw err;
+  }
+
+  const bc = await blockchainService.safeCall(() => blockchainService.getPassportOnChain(hmac_hash));
+  if (bc.ok) {
+    const row = bc.data;
+    const renewed = typeof row.renewed === "boolean" ? row.renewed : row[7];
+    if (renewed) {
+      const err = new Error("PASSEPORT_REMPLACE");
+      err.status = 409;
+      err.details =
+        "Ce passeport a été renouvelé sur la chaîne. Utilisez le hash / document actif pour une révocation.";
+      throw err;
+    }
+  }
 
   const ex = await RevocationRequest.findOne({
     hmac_hash,

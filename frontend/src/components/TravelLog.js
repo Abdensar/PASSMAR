@@ -34,7 +34,7 @@ export default function TravelLog() {
       setResult({ code: 200, message: "Voyage enregistré avec succès", data: out });
       toast.success("Voyage enregistré !");
     } catch (ex) {
-      setResult({ code: ex.response?.status || 500, message: formatError(ex) });
+      setResult({ code: ex.status || 500, message: formatError(ex) });
       toast.error(formatError(ex));
     } finally {
       setLoading(false);
@@ -51,12 +51,14 @@ export default function TravelLog() {
       setHistory(out);
       setResult({ code: 200, message: "Historique chargé", data: out });
     } catch (ex) {
-      setResult({ code: ex.response?.status || 500, message: formatError(ex) });
+      setResult({ code: ex.status || 500, message: formatError(ex) });
       toast.error(formatError(ex));
     } finally {
       setLoading(false);
     }
   }
+
+  const offchainTravels = history && Array.isArray(history.offchain) ? history.offchain : [];
 
   return (
     <div className="max-w-4xl space-y-6">
@@ -168,9 +170,9 @@ export default function TravelLog() {
             </button>
           </form>
         </div>
-        {result && result.data && result.data.txHash && (
+        {result && result.data && (result.data.tx_hash || result.data.txHash) && (
           <div className="mt-4">
-            <BlockchainProof txHash={result.data.txHash} />
+            <BlockchainProof txHash={result.data.tx_hash || result.data.txHash} />
           </div>
         )}
       </div>
@@ -212,11 +214,16 @@ export default function TravelLog() {
         {history && (
           <div className="mt-6">
             <div className="bg-surface-light dark:bg-surface-dark border border-gray-200 dark:border-gray-700 rounded-xl p-6">
-              <h3 className="text-lg font-semibold text-text-light dark:text-text mb-4">Voyages</h3>
-              {history.length > 0 ? (
+              <h3 className="text-lg font-semibold text-text-light dark:text-text mb-4">Voyages (off-chain)</h3>
+              {history.onchain_count != null && (
+                <p className="text-sm text-muted-light dark:text-muted mb-3">
+                  Preuves on-chain : {history.onchain_count} mouvement(s)
+                </p>
+              )}
+              {offchainTravels.length > 0 ? (
                 <div className="space-y-3">
-                  {history.map((travel, index) => (
-                    <div key={index} className="bg-[#E8D5B7] dark:bg-gray-700/50 rounded-lg p-4">
+                  {offchainTravels.map((travel, index) => (
+                    <div key={travel.tx_hash || index} className="bg-[#E8D5B7] dark:bg-gray-700/50 rounded-lg p-4">
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <div>
                           <span className="text-sm text-muted-light dark:text-muted">Type:</span>
@@ -228,7 +235,9 @@ export default function TravelLog() {
                         </div>
                         <div>
                           <span className="text-sm text-muted-light dark:text-muted">Date:</span>
-                          <p className="text-text-light dark:text-text">{new Date(travel.date_passage).toLocaleString('fr-FR')}</p>
+                          <p className="text-text-light dark:text-text">
+                            {new Date(travel.created_at || travel.date_passage).toLocaleString('fr-FR')}
+                          </p>
                         </div>
                       </div>
                       {travel.destination && (

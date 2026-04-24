@@ -1,11 +1,119 @@
+const mongoose = require("mongoose");
 const PassportOffchain = require("../models/PassportOffchain");
 const Renouvellement = require("../models/Renouvellement");
+const Agent = require("../models/Agent");
 const authService = require("./authService");
 const blockchainService = require("./blockchainService");
 const { encryptField, decryptField } = require("../utils/encryption");
 
 function toUnixSeconds(d) {
   return Math.floor(new Date(d).getTime() / 1000);
+}
+
+/** Treat missing is_current as true (documents before lifecycle migration). */
+function isOffchainCurrent(doc) {
+  if (!doc) return false;
+  return doc.is_current !== false;
+}
+
+/** Normalise uint256 / BigNumber ethers → nombre Unix (secondes). */
+function toChainInt(v) {
+  if (v == null || v === "") return null;
+  if (typeof v === "bigint") return Number(v);
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "object" && typeof v.toNumber === "function") {
+    try {
+      return v.toNumber();
+    } catch {
+      /* fallthrough */
+    }
+  }
+  if (typeof v === "object" && (v._hex != null || v.hex != null)) {
+    const h = v._hex || v.hex;
+    const n = parseInt(String(h), 16);
+    return Number.isFinite(n) ? n : null;
+  }
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function mapOnchainFromRow(row) {
+  if (!row) return null;
+  const statutEffectif = row.statutEffectif ?? row[8];
+  const renewed = typeof row.renewed === "boolean" ? row.renewed : row[7];
+  const de = toChainInt(row.dateEmission ?? row[4]);
+  const dx = toChainInt(row.dateExpiration ?? row[5]);
+  return {
+    statut_effectif: statutEffectif,
+    interdiction_sortie:
+      typeof row.interdictionSortie === "boolean" ? row.interdictionSortie : row[2],
+    date_emission: de,
+    date_expiration: dx,
+    eth_agent_emetteur: row.ethAgentEmetteur ?? row[6],
+    raison_revocation: row.raisonRevocation ?? row[3],
+    renewed: Boolean(renewed),
+  };
+}
+
+async function enrichOnchainWithAgentIdentifiant(onMap) {
+  if (!onMap || !onMap.eth_agent_emetteur) return onMap;
+  const eth = String(onMap.eth_agent_emetteur).toLowerCase();
+  const agent = await Agent.findOne({ eth_address: eth }).select("identifiant").lean();
+  return {
+    ...onMap,
+    agent_emetteur_identifiant: agent?.identifiant || null,
+  };
+}
+
+async function enrichOffchainCreatorIdent(doc) {
+  if (!doc?.id_agent_createur) return doc;
+  const ag = await Agent.findById(doc.id_agent_createur).select("identifiant").lean();
+  return { ...doc, agent_createur_identifiant: ag?.identifiant || null };
+}
+
+/** Ajoute motif + tx du renouvellement pour chaque version après la première. */
+async function attachRenewalMotifsToChain(summaries) {
+  const out = summaries.map((s) => ({ ...s }));
+  for (let i = 1; i < out.length; i += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    const r = await Renouvellement.findOne({
+      hash_precedent: out[i - 1].hmac_hash,
+      hash_nouveau: out[i].hmac_hash,
+    })
+      .select("motif tx_hash")
+      .lean();
+    out[i].renewal_motif = r?.motif || null;
+    out[i].renewal_tx_hash = r?.tx_hash || null;
+  }
+  return out;
+}
+
+/** Chaîne complète des versions (plus ancienne → passeport actuel), à partir de n'importe quelle version. */
+async function buildRenewalChainSummaries(startOff) {
+  let oldest = startOff;
+  while (oldest && oldest.supersedes) {
+    // eslint-disable-next-line no-await-in-loop
+    const prev = await PassportOffchain.findOne({ hmac_hash: oldest.supersedes }).lean();
+    if (!prev) break;
+    oldest = prev;
+  }
+  const summaries = [];
+  let cur = oldest;
+  for (;;) {
+    summaries.push({
+      hmac_hash: cur.hmac_hash,
+      num_passeport: cur.num_passeport,
+      mrz: cur.mrz,
+      is_current: isOffchainCurrent(cur),
+      created_at: cur.created_at,
+    });
+    if (!cur.superseded_by) break;
+    // eslint-disable-next-line no-await-in-loop
+    const next = await PassportOffchain.findOne({ hmac_hash: cur.superseded_by }).lean();
+    if (!next) break;
+    cur = next;
+  }
+  return summaries;
 }
 
 async function createPassport(payload, agent) {
@@ -36,11 +144,20 @@ async function createPassport(payload, agent) {
   }
 
   const hmac_hash = authService.generatePassportHmac(num_passeport, mrz);
+  const cinTrim = String(cin).trim();
 
-  const existsMongo = await PassportOffchain.findOne({
-    $or: [{ hmac_hash }, { cin: String(cin).trim() }],
+  const existsHash = await PassportOffchain.findOne({ hmac_hash }).lean();
+  if (existsHash) {
+    const err = new Error("PASSPORT_OR_CIN_EXISTS");
+    err.status = 409;
+    throw err;
+  }
+
+  const cinTaken = await PassportOffchain.findOne({
+    cin: cinTrim,
+    is_current: { $ne: false },
   }).lean();
-  if (existsMongo) {
+  if (cinTaken) {
     const err = new Error("PASSPORT_OR_CIN_EXISTS");
     err.status = 409;
     throw err;
@@ -89,13 +206,14 @@ async function createPassport(payload, agent) {
       mrz: String(mrz).trim(),
       date_naissance,
       lieu_naissance,
-      cin: String(cin).trim(),
+      cin: cinTrim,
       photo_url: encryptField(photo_url || ""),
       biometrie: encryptField(biometrie || ""),
       adresse: adresse || "",
       nationalite: nationalite || "Marocaine",
       id_agent_createur: agent._id,
       tx_hash_creation: txHash,
+      is_current: true,
     });
   } catch (e) {
     const err = new Error("MONGO_AFTER_CHAIN_FAILURE");
@@ -163,7 +281,19 @@ async function verifyPassport(num_passeport, mrz) {
     };
   }
 
+  const renewedOnChain = typeof row.renewed === "boolean" ? row.renewed : row[7];
+
   if (statutEffectif === "EXPIRE") {
+    if (renewedOnChain) {
+      return {
+        code: "REMPLACE",
+        message: "Passeport remplacé par un renouvellement — utiliser le nouveau numéro/MRZ",
+        http: 200,
+        hmac_hash,
+        statut_effectif: statutEffectif,
+        renewed: true,
+      };
+    }
     return {
       code: "EXPIRE",
       message: "Passeport expiré — renouvellement requis",
@@ -204,6 +334,16 @@ async function verifyPassport(num_passeport, mrz) {
   };
 }
 
+async function getPassportByCredentials(num_passeport, mrz) {
+  if (!num_passeport || !mrz) {
+    const err = new Error("CHAMPS_REQUIS");
+    err.status = 400;
+    throw err;
+  }
+  const hmac_hash = authService.generatePassportHmac(num_passeport, mrz);
+  return getByHashForAgent(hmac_hash);
+}
+
 async function getByHashForAgent(hmac_hash) {
   const off = await PassportOffchain.findOne({ hmac_hash }).lean();
   if (!off) {
@@ -219,32 +359,77 @@ async function getByHashForAgent(hmac_hash) {
     throw err;
   }
   const row = bc.data;
-  const statutEffectif = row.statutEffectif ?? row[8];
-  const renewed = typeof row.renewed === "boolean" ? row.renewed : row[7];
   const copy = {
     ...off,
     photo_url: decryptField(off.photo_url),
     biometrie: decryptField(off.biometrie),
   };
   delete copy.__v;
+  const copyWithCreator = await enrichOffchainCreatorIdent(copy);
+
+  let remplace_par = null;
+  if (off.superseded_by) {
+    const next = await PassportOffchain.findOne({ hmac_hash: off.superseded_by })
+      .select("hmac_hash num_passeport mrz is_current")
+      .lean();
+    if (next) {
+      remplace_par = {
+        hmac_hash: next.hmac_hash,
+        num_passeport: next.num_passeport,
+        mrz: next.mrz,
+        is_current: isOffchainCurrent(next),
+      };
+    } else {
+      remplace_par = { hmac_hash: off.superseded_by, note: "Ligne off-chain introuvable pour le nouveau hash" };
+    }
+  }
+
+  const chainBase = await buildRenewalChainSummaries(off);
+  const renewal_chain = await attachRenewalMotifsToChain(chainBase);
+  const activeHmac = renewal_chain.length ? renewal_chain[renewal_chain.length - 1].hmac_hash : off.hmac_hash;
+
+  const verification_scanned = await verifyPassport(String(off.num_passeport).trim(), String(off.mrz).trim());
+
+  const activeOffLean = await PassportOffchain.findOne({ hmac_hash: activeHmac }).lean();
+  const verification_active = activeOffLean
+    ? await verifyPassport(String(activeOffLean.num_passeport).trim(), String(activeOffLean.mrz).trim())
+    : verification_scanned;
+
+  let active_passport = null;
+  if (activeOffLean && activeHmac !== off.hmac_hash) {
+    const bcAct = await blockchainService.safeCall(() => blockchainService.getPassportOnChain(activeHmac));
+    if (bcAct.ok) {
+      const offAct = {
+        ...activeOffLean,
+        photo_url: decryptField(activeOffLean.photo_url),
+        biometrie: decryptField(activeOffLean.biometrie),
+      };
+      delete offAct.__v;
+      const offActEnriched = await enrichOffchainCreatorIdent(offAct);
+      active_passport = {
+        offchain: offActEnriched,
+        onchain: await enrichOnchainWithAgentIdentifiant(mapOnchainFromRow(bcAct.data)),
+      };
+    }
+  }
+
+  let onMain = mapOnchainFromRow(row);
+  onMain = await enrichOnchainWithAgentIdentifiant(onMain);
+
   return {
-    offchain: copy,
-    onchain: {
-      statut_effectif: statutEffectif,
-      interdiction_sortie:
-        typeof row.interdictionSortie === "boolean" ? row.interdictionSortie : row[2],
-      date_emission:
-        typeof row.dateEmission === "bigint"
-          ? Number(row.dateEmission)
-          : row.dateEmission ?? row[4],
-      date_expiration:
-        typeof row.dateExpiration === "bigint"
-          ? Number(row.dateExpiration)
-          : row.dateExpiration ?? row[5],
-      eth_agent_emetteur: row.ethAgentEmetteur ?? row[6],
-      raison_revocation: row.raisonRevocation ?? row[3],
-      renewed: Boolean(renewed),
+    offchain: copyWithCreator,
+    onchain: onMain,
+    lifecycle: {
+      is_current: isOffchainCurrent(off),
+      superseded_by: off.superseded_by || null,
+      supersedes: off.supersedes || null,
+      remplace_par,
     },
+    renewal_chain,
+    active_hmac_hash: activeHmac,
+    verification_scanned,
+    verification_active,
+    active_passport,
   };
 }
 
@@ -272,6 +457,14 @@ async function renewPassport(payload, agent) {
     err.status = 404;
     throw err;
   }
+  if (!isOffchainCurrent(off)) {
+    const err = new Error("PASSEPORT_NON_ACTIF_OFFCHAIN");
+    err.status = 409;
+    err.details = off.superseded_by
+      ? `Ce passeport n'est plus la version courante. Utilisez le hash actif: ${off.superseded_by}`
+      : "Ce passeport n'est plus la version courante.";
+    throw err;
+  }
 
   const existsNew = await PassportOffchain.findOne({ hmac_hash: newHash });
   if (existsNew) {
@@ -282,6 +475,25 @@ async function renewPassport(payload, agent) {
 
   const newDateEmission = Math.floor(Date.now() / 1000);
   const newDateExpiration = toUnixSeconds(date_expiration);
+  if (newDateExpiration <= newDateEmission) {
+    const err = new Error("DATE_EXPIRATION_INVALIDE");
+    err.status = 400;
+    throw err;
+  }
+
+  const preRenew = await blockchainService.safeCall(() => blockchainService.getPassportOnChain(oldHash));
+  if (preRenew.ok) {
+    const r = preRenew.data;
+    const renewedOld = typeof r.renewed === "boolean" ? r.renewed : r[7];
+    if (renewedOld) {
+      const err = new Error("PASSEPORT_DEJA_RENOUVELE");
+      err.status = 409;
+      err.details =
+        "Ce passeport a deja ete renouvelle on-chain. Utilisez le couple numero/MRZ du passeport actif.";
+      throw err;
+    }
+  }
+
   const ethAgent = String(agent.eth_address).toLowerCase();
 
   const bc = await blockchainService.safeCall(() =>
@@ -314,32 +526,77 @@ async function renewPassport(payload, agent) {
 
   const txHash = bc.data.txHash;
 
-  await Renouvellement.create({
-    hash_precedent: oldHash,
-    hash_nouveau: newHash,
-    id_agent: agent._id,
-    motif,
+  const session = await mongoose.startSession();
+  try {
+    await session.withTransaction(async () => {
+      const oldUpdate = await PassportOffchain.updateOne(
+        { hmac_hash: oldHash, is_current: { $ne: false } },
+        { $set: { is_current: false, superseded_by: newHash } },
+        { session }
+      );
+      if (oldUpdate.matchedCount === 0) {
+        const err = new Error("CONCURRENT_RENEWAL");
+        err.status = 409;
+        throw err;
+      }
+
+      await Renouvellement.create(
+        [
+          {
+            hash_precedent: oldHash,
+            hash_nouveau: newHash,
+            id_agent: agent._id,
+            motif,
+            tx_hash: txHash,
+          },
+        ],
+        { session }
+      );
+
+      await PassportOffchain.create(
+        [
+          {
+            hmac_hash: newHash,
+            nom: off.nom,
+            prenom: off.prenom,
+            num_passeport: String(nouveau_num_passeport).trim(),
+            mrz: String(nouveau_mrz).trim(),
+            date_naissance: off.date_naissance,
+            lieu_naissance: off.lieu_naissance,
+            cin: off.cin,
+            photo_url: off.photo_url,
+            biometrie: off.biometrie,
+            adresse: off.adresse,
+            nationalite: off.nationalite,
+            id_agent_createur: agent._id,
+            tx_hash_creation: txHash,
+            is_current: true,
+            supersedes: oldHash,
+          },
+        ],
+        { session }
+      );
+    });
+  } catch (e) {
+    if (e && (e.code === 11000 || String(e.message).includes("E11000"))) {
+      const err = new Error("OFFCHAIN_WRITE_CONFLICT");
+      err.status = 409;
+      err.details =
+        "Ecriture MongoDB impossible (conflit). La chaine peut etre a jour — verifier les donnees et contacter un admin si besoin.";
+      throw err;
+    }
+    throw e;
+  } finally {
+    session.endSession();
+  }
+
+  return {
+    ancien_hmac_hash: oldHash,
+    nouveau_hmac_hash: newHash,
     tx_hash: txHash,
-  });
-
-  await PassportOffchain.create({
-    hmac_hash: newHash,
-    nom: off.nom,
-    prenom: off.prenom,
-    num_passeport: nouveau_num_passeport,
-    mrz: nouveau_mrz,
-    date_naissance: off.date_naissance,
-    lieu_naissance: off.lieu_naissance,
-    cin: off.cin,
-    photo_url: off.photo_url,
-    biometrie: off.biometrie,
-    adresse: off.adresse,
-    nationalite: off.nationalite,
-    id_agent_createur: agent._id,
-    tx_hash_creation: txHash,
-  });
-
-  return { ancien_hmac_hash: oldHash, nouveau_hmac_hash: newHash, tx_hash: txHash };
+    nouveau_num_passeport: String(nouveau_num_passeport).trim(),
+    nouveau_mrz: String(nouveau_mrz).trim(),
+  };
 }
 
 async function setTravelBan(hmac_hash, interdiction, _admin) {
@@ -349,6 +606,28 @@ async function setTravelBan(hmac_hash, interdiction, _admin) {
     err.status = 404;
     throw err;
   }
+  if (!isOffchainCurrent(off)) {
+    const err = new Error("PASSEPORT_NON_ACTIF_OFFCHAIN");
+    err.status = 409;
+    err.details = off.superseded_by
+      ? `Interdiction de sortie: utiliser le passeport courant (hash ${off.superseded_by}).`
+      : "Version de passeport non courante.";
+    throw err;
+  }
+
+  const preBc = await blockchainService.safeCall(() => blockchainService.getPassportOnChain(hmac_hash));
+  if (preBc.ok) {
+    const row0 = preBc.data;
+    const renewed0 = typeof row0.renewed === "boolean" ? row0.renewed : row0[7];
+    if (renewed0) {
+      const err = new Error("PASSEPORT_REMPLACE");
+      err.status = 409;
+      err.details =
+        "Ce hash correspond a un passeport deja renouvele. Appliquez l'interdiction sur le passeport actif.";
+      throw err;
+    }
+  }
+
   const bc = await blockchainService.safeCall(() =>
     blockchainService.setTravelBanOnChain(hmac_hash, Boolean(interdiction))
   );
@@ -364,8 +643,10 @@ async function setTravelBan(hmac_hash, interdiction, _admin) {
 module.exports = {
   createPassport,
   verifyPassport,
+  getPassportByCredentials,
   getByHashForAgent,
   renewPassport,
   setTravelBan,
   toUnixSeconds,
+  isOffchainCurrent,
 };

@@ -6,7 +6,9 @@ import { api } from "./services/apiClient";
 import { ThemeProvider } from "./ThemeContext";
 import LoginPage from "./pages/LoginPage";
 import DashboardDouane from "./pages/DashboardDouane";
-import DashboardPolice from "./pages/DashboardPolice";
+import PoliceLayout from "./pages/PoliceLayout";
+import PolicePassportPage from "./pages/PolicePassportPage";
+import PoliceTravelHistoryPage from "./pages/PoliceTravelHistoryPage";
 import PanelAdmin from "./pages/PanelAdmin";
 import LandingPage from "./pages/LandingPage";
 
@@ -60,12 +62,16 @@ function AppRoutes() {
         path="/police"
         element={
           agent && agent.role === "POLICE" ? (
-            <DashboardPolice agent={agent} onLogout={() => setAgent(null)} />
+            <PoliceLayout agent={agent} onLogout={() => setAgent(null)} />
           ) : (
             <Navigate to="/login" replace />
           )
         }
-      />
+      >
+        <Route index element={<PolicePassportPage />} />
+        <Route path="voyages" element={<PoliceTravelHistoryPage />} />
+        <Route path="*" element={<Navigate to="/police" replace />} />
+      </Route>
       <Route
         path="/admin"
         element={

@@ -9,7 +9,8 @@ const passportOffchainSchema = new mongoose.Schema(
     mrz: { type: String, required: true },
     date_naissance: { type: Date, required: true },
     lieu_naissance: { type: String, required: true },
-    cin: { type: String, required: true, unique: true },
+    /** Same CIN across renewed versions — uniqueness enforced in createPassport for current only. */
+    cin: { type: String, required: true },
     photo_url: { type: String, default: "" },
     biometrie: { type: String, default: "" },
     adresse: { type: String, default: "" },
@@ -17,6 +18,12 @@ const passportOffchainSchema = new mongoose.Schema(
     id_agent_createur: { type: String, ref: "Agent", required: true },
     tx_hash_creation: { type: String, default: "" },
     created_at: { type: Date, default: Date.now },
+    /** Current off-chain row for this passport hash; false after renewal supersedes this row. */
+    is_current: { type: Boolean, default: true },
+    /** If renewed, HMAC of the replacement passport (off-chain + on-chain). */
+    superseded_by: { type: String, default: null },
+    /** If this row is the replacement, HMAC of the previous passport. */
+    supersedes: { type: String, default: null },
   },
   { collection: "passeport_offchain" }
 );

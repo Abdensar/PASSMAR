@@ -41,7 +41,7 @@ export default function PassportForm() {
       setResult({ code: 200, message: "Passeport créé avec succès", data: out });
       toast.success("Passeport créé !");
     } catch (ex) {
-      setResult({ code: ex.response?.status || 500, message: formatError(ex) });
+      setResult({ code: ex.status || 500, message: formatError(ex) });
       toast.error(formatError(ex));
     } finally {
       setLoading(false);
