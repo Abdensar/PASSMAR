@@ -1,6 +1,7 @@
 const RevocationRequest = require("../models/RevocationRequest");
 const PassportOffchain = require("../models/PassportOffchain");
 const blockchainService = require("./blockchainService");
+const authService = require("./authService");
 
 const RAISON_LABEL = {
   VOLE: "VOLÉ",
@@ -10,8 +11,14 @@ const RAISON_LABEL = {
   JUDICIAIRE: "JUDICIAIRE",
 };
 
-async function initiateRevoke({ hmac_hash, raison }, agent) {
-  if (!hmac_hash || !raison) {
+async function initiateRevoke({ hmac_hash, num_passeport, mrz, raison }, agent) {
+  let targetHash = hmac_hash ? String(hmac_hash).trim() : "";
+  const num = num_passeport ? String(num_passeport).trim() : "";
+  const mrzVal = mrz ? String(mrz).trim() : "";
+  if (!targetHash && num && mrzVal) {
+    targetHash = authService.generatePassportHmac(num, mrzVal);
+  }
+  if (!targetHash || !raison) {
     const err = new Error("CHAMPS_REQUIS");
     err.status = 400;
     throw err;
@@ -23,7 +30,7 @@ async function initiateRevoke({ hmac_hash, raison }, agent) {
     throw err;
   }
 
-  const off = await PassportOffchain.findOne({ hmac_hash });
+  const off = await PassportOffchain.findOne({ hmac_hash: targetHash });
   if (!off) {
     const err = new Error("NOT_FOUND");
     err.status = 404;
@@ -38,7 +45,7 @@ async function initiateRevoke({ hmac_hash, raison }, agent) {
     throw err;
   }
 
-  const bc = await blockchainService.safeCall(() => blockchainService.getPassportOnChain(hmac_hash));
+  const bc = await blockchainService.safeCall(() => blockchainService.getPassportOnChain(targetHash));
   if (bc.ok) {
     const row = bc.data;
     const renewed = typeof row.renewed === "boolean" ? row.renewed : row[7];
@@ -52,7 +59,7 @@ async function initiateRevoke({ hmac_hash, raison }, agent) {
   }
 
   const ex = await RevocationRequest.findOne({
-    hmac_hash,
+    hmac_hash: targetHash,
     statut: "EN_ATTENTE",
   });
   if (ex) {
@@ -62,12 +69,12 @@ async function initiateRevoke({ hmac_hash, raison }, agent) {
   }
 
   const doc = await RevocationRequest.create({
-    hmac_hash,
+    hmac_hash: targetHash,
     id_agent_initiator: agent._id,
     raison,
     statut: "EN_ATTENTE",
   });
-  return { id_demande: doc._id, statut: doc.statut };
+  return { id_demande: doc._id, statut: doc.statut, hmac_hash: targetHash };
 }
 
 async function listPending() {
@@ -122,6 +129,13 @@ async function confirmRevoke({ id_demande }, admin) {
   reqDoc.date_confirmation = new Date();
   reqDoc.tx_hash_revocation = bc.data.txHash;
   await reqDoc.save();
+
+  // Mark old passport as inactive now that revocation is confirmed
+  const PassportOffchain = require("../models/PassportOffchain");
+  await PassportOffchain.updateOne(
+    { hmac_hash: reqDoc.hmac_hash },
+    { $set: { is_current: false } }
+  );
 
   return {
     id_demande: reqDoc._id,

@@ -7,6 +7,7 @@ import SidebarLayout from "../components/SidebarLayout";
 import AlertResult from "../components/AlertResult";
 import HashDisplay from "../components/HashDisplay";
 import PassportDetailCards from "../components/PassportDetailCards";
+import StatusBadge from "../components/StatusBadge";
 import toast from 'react-hot-toast';
 
 export default function DashboardDouane({ agent, onLogout }) {
@@ -20,7 +21,7 @@ export default function DashboardDouane({ agent, onLogout }) {
     date_expiration: "",
     motif: "EXPIRATION",
   });
-  const [revoke, setRevoke] = useState({ hmac_hash: "", raison: "VOLE" });
+  const [revoke, setRevoke] = useState({ num_passeport: "", mrz: "", raison: "VOLE" });
   const [foreign, setForeign] = useState({
     nationalite: "",
     num_passeport_etr: "",
@@ -32,6 +33,8 @@ export default function DashboardDouane({ agent, onLogout }) {
   const [consultNum, setConsultNum] = useState("");
   const [consultMrz, setConsultMrz] = useState("");
   const [lookupRes, setLookupRes] = useState(null);
+  const [cinHistory, setCinHistory] = useState(null);
+  const [travelHistory, setTravelHistory] = useState(null);
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
 
@@ -66,7 +69,12 @@ export default function DashboardDouane({ agent, onLogout }) {
     setResult(null);
     setLoading(true);
     try {
-      const out = await api.post("/passport/revoke/initiate", revoke);
+      const payload = {
+        num_passeport: String(revoke.num_passeport || "").trim(),
+        mrz: String(revoke.mrz || "").trim(),
+        raison: revoke.raison,
+      };
+      const out = await api.post("/passport/revoke/initiate", payload);
       setResult({ code: 200, message: "Demande de révocation initiée", data: out });
       toast.success("Demande de révocation soumise !");
     } catch (ex) {
@@ -103,6 +111,8 @@ export default function DashboardDouane({ agent, onLogout }) {
     const mt = String(m ?? "").trim();
     setResult(null);
     setLookupRes(null);
+    setCinHistory(null);
+    setTravelHistory(null);
     setLoading(true);
     try {
       const out = await api.lookupPassport(nt, mt);
@@ -131,6 +141,44 @@ export default function DashboardDouane({ agent, onLogout }) {
     },
     [loadConsultByCredentials]
   );
+
+  const loadCINHistory = useCallback(async (cin) => {
+    setCinHistory(null);
+    setLoading(true);
+    try {
+      const out = await api.getCINHistory(cin);
+      setCinHistory(out);
+      toast.success("Historique complet chargé");
+    } catch (ex) {
+      toast.error(formatError(ex));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const loadTravelHistory = useCallback(async (numPasseport, mrz) => {
+    setTravelHistory(null);
+    setLoading(true);
+    try {
+      // Get HMAC hash from num_passeport and mrz using query params
+      const q = new URLSearchParams({ num: numPasseport, mrz }).toString();
+      const passportData = await api.get(`/passport/lookup?${q}`);
+      const hmacHash = passportData.offchain?.hmac_hash || passportData.hmac_hash;
+      
+      if (!hmacHash) {
+        throw new Error("Impossible de trouver le hash du passeport");
+      }
+      
+      // Fetch travel history for this passport
+      const out = await api.get(`/passport/${encodeURIComponent(hmacHash)}/travels`);
+      setTravelHistory(out);
+      toast.success("Historique de voyage chargé");
+    } catch (ex) {
+      toast.error(formatError(ex));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   const renderContent = () => {
     switch (currentPage) {
@@ -256,13 +304,27 @@ export default function DashboardDouane({ agent, onLogout }) {
               <form onSubmit={submitRevoke} className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-text-light dark:text-text mb-2">
-                    HMAC Hash
+                    N° passeport
                   </label>
                   <input
                     type="text"
-                    value={revoke.hmac_hash}
-                    onChange={(e) => setRevoke({ ...revoke, hmac_hash: e.target.value })}
+                    value={revoke.num_passeport}
+                    onChange={(e) => setRevoke({ ...revoke, num_passeport: e.target.value })}
                     className="w-full px-3 py-2 bg-background-light dark:bg-background border border-gray-300 dark:border-gray-600 rounded-lg text-text-light dark:text-text placeholder-muted-light dark:placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary"
+                    placeholder="Comme sur le document"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-text-light dark:text-text mb-2">
+                    MRZ
+                  </label>
+                  <input
+                    type="text"
+                    value={revoke.mrz}
+                    onChange={(e) => setRevoke({ ...revoke, mrz: e.target.value })}
+                    className="w-full px-3 py-2 bg-background-light dark:bg-background border border-gray-300 dark:border-gray-600 rounded-lg font-mono text-sm text-text-light dark:text-text placeholder-muted-light dark:placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary"
+                    placeholder="Ligne MRZ du document"
                     required
                   />
                 </div>
@@ -454,7 +516,163 @@ export default function DashboardDouane({ agent, onLogout }) {
               </form>
             </div>
             {lookupRes && (
-              <PassportDetailCards data={lookupRes} onSelectPassportVersion={onSelectPassportVersionConsult} />
+              <div className="space-y-4 mt-6">
+                <PassportDetailCards data={lookupRes} onSelectPassportVersion={onSelectPassportVersionConsult} />
+                
+                {/* History and Travel Buttons */}
+                <div className="flex gap-3 flex-wrap">
+                  <button
+                    onClick={() => loadCINHistory(lookupRes.offchain.cin)}
+                    disabled={loading}
+                    className="flex-1 min-w-[200px] bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold py-2 px-4 rounded-lg transition-colors"
+                  >
+                    {loading ? "Chargement..." : "📋 Historique complet (CIN)"}
+                  </button>
+                  <button
+                    onClick={() => loadTravelHistory(lookupRes.offchain.num_passeport, lookupRes.offchain.mrz)}
+                    disabled={loading}
+                    className="flex-1 min-w-[200px] bg-green-600 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold py-2 px-4 rounded-lg transition-colors"
+                  >
+                    {loading ? "Chargement..." : "✈️ Historique de voyage"}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* CIN History Display */}
+            {cinHistory && (
+              <div className="mt-6 bg-surface-light dark:bg-surface-dark border border-gray-200 dark:border-gray-700 rounded-xl p-6">
+                <h3 className="text-lg font-bold mb-4 text-text-light dark:text-text">
+                  Historique complet pour CIN: {cinHistory.cin}
+                </h3>
+                <div className="space-y-3">
+                  {cinHistory.history.map((passport, idx) => (
+                    <div key={idx} className="border border-gray-300 dark:border-gray-600 rounded-lg p-4 bg-background-light dark:bg-background">
+                      <div className="flex justify-between items-start mb-2">
+                        <div>
+                          <p className="font-semibold text-text-light dark:text-text">
+                            Passeport {idx + 1}: {passport.num_passeport}
+                          </p>
+                          <p className="text-sm text-muted-light dark:text-muted">MRZ: {passport.mrz}</p>
+                        </div>
+                        <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
+                          passport.status === "ACTIF" 
+                            ? "bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-300"
+                            : passport.status.includes("REVOQUE")
+                            ? "bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-300"
+                            : "bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-300"
+                        }`}>
+                          {passport.status}
+                        </span>
+                      </div>
+                      <div className="text-xs text-muted-light dark:text-muted space-y-1">
+                        <p>Créé: {new Date(passport.created_at).toLocaleDateString("fr-FR")}</p>
+                        <p>Hash: {passport.hmac_hash.substring(0, 16)}...</p>
+                        {passport.revocation && (
+                          <div className="mt-2 p-2 bg-red-50 dark:bg-red-900/20 rounded">
+                            <p><strong>Raison:</strong> {passport.revocation.raison}</p>
+                            <p><strong>Approuvé:</strong> {passport.revocation.allow_replacement ? "Oui" : "Non"}</p>
+                          </div>
+                        )}
+                        {passport.lifecycle.supersedes && (
+                          <p>↓ Remplace: {passport.lifecycle.supersedes.substring(0, 16)}...</p>
+                        )}
+                        {passport.lifecycle.superseded_by && (
+                          <p>↓ Remplacé par: {passport.lifecycle.superseded_by.substring(0, 16)}...</p>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Travel History Display */}
+            {travelHistory && (
+              <div className="mt-6 bg-surface-light dark:bg-surface-dark border border-gray-200 dark:border-gray-700 rounded-xl p-6">
+                <div className="flex items-center justify-between mb-6">
+                  <div>
+                    <h3 className="text-lg font-bold text-text-light dark:text-text">
+                      ✈️ Historique de Voyage
+                    </h3>
+                    <p className="text-sm text-muted-light dark:text-muted mt-1">
+                      Enregistrements des mouvements de ce passeport
+                    </p>
+                  </div>
+                  {travelHistory.onchain_count != null && (
+                    <span className="bg-blockchain/15 dark:bg-blockchain/25 text-blockchain-light dark:text-blockchain px-3 py-1 rounded-full text-sm font-semibold">
+                      {travelHistory.onchain_count} sur chaîne
+                    </span>
+                  )}
+                </div>
+                
+                {travelHistory.offchain && travelHistory.offchain.length > 0 ? (
+                  <div className="grid grid-cols-1 gap-4">
+                    {travelHistory.offchain.map((travel, idx) => (
+                      <div
+                        key={travel._id || travel.tx_hash || idx}
+                        className="bg-background-light dark:bg-background border border-gray-200 dark:border-gray-600 rounded-lg p-4 hover:border-primary-light dark:hover:border-primary transition-colors"
+                      >
+                        <div className="flex justify-between items-start mb-3">
+                          <div className="flex items-center gap-3">
+                            <span className="text-2xl">
+                              {travel.type_mvt === "ENT" ? "📥" : "📤"}
+                            </span>
+                            <div>
+                              <p className="font-semibold text-text-light dark:text-text">
+                                {travel.type_mvt === "ENT" ? "Entrée" : "Sortie"}
+                              </p>
+                              <p className="text-sm text-muted-light dark:text-muted">
+                                {new Date(travel.created_at || travel.date_passage).toLocaleDateString("fr-FR")}
+                              </p>
+                            </div>
+                          </div>
+                          {travel.status && <StatusBadge status={travel.status} />}
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                          <div>
+                            <p className="text-muted-light dark:text-muted font-medium">Poste Frontière</p>
+                            <p className="text-text-light dark:text-text">{travel.checkpoint}</p>
+                          </div>
+                          <div>
+                            <p className="text-muted-light dark:text-muted font-medium">
+                              {travel.type_mvt === "ENT" ? "Provenance" : "Destination"}
+                            </p>
+                            <p className="text-text-light dark:text-text">
+                              {travel.type_mvt === "ENT"
+                                ? travel.provenance || "—"
+                                : travel.destination || "—"}
+                            </p>
+                          </div>
+                        </div>
+
+                        {travel.details && (
+                          <div className="mt-3 pt-3 border-t border-gray-300 dark:border-gray-500">
+                            <p className="text-sm text-muted-light dark:text-muted font-medium">Notes</p>
+                            <p className="text-sm text-text-light dark:text-text">{travel.details}</p>
+                          </div>
+                        )}
+
+                        {travel.tx_hash && (
+                          <div className="mt-3 text-xs text-muted-light dark:text-muted font-mono">
+                            <p>🔗 Tx: {travel.tx_hash.substring(0, 20)}...</p>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-8">
+                    <p className="text-muted-light dark:text-muted text-lg">
+                      ✈️ Aucun voyage enregistré pour ce passeport
+                    </p>
+                    <p className="text-sm text-muted-light dark:text-muted mt-2">
+                      Les mouvements frontières apparaîtront ici une fois enregistrés.
+                    </p>
+                  </div>
+                )}
+              </div>
             )}
             {result && result.code !== 200 && <AlertResult {...result} />}
           </div>

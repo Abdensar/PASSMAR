@@ -21,6 +21,11 @@ const revocationRequestSchema = new mongoose.Schema(
     date_confirmation: { type: Date, default: null },
     notes: { type: String, default: "" },
     tx_hash_revocation: { type: String, default: "" },
+    // For post-revocation replacement tracking (FALSIFIE/DECES/JUDICIAIRE cases)
+    allow_replacement: { type: Boolean, default: false },
+    replacement_approved_at: { type: Date, default: null },
+    replacement_approved_by: { type: String, ref: "Agent", default: null },
+    replacement_notes: { type: String, default: "" },
   },
   { _id: false, collection: "revocation_request" }
 );

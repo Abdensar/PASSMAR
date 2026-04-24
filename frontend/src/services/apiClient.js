@@ -42,6 +42,10 @@ export const api = {
     const q = new URLSearchParams({ num, mrz }).toString();
     return request(`/passport/lookup?${q}`, { method: "GET" });
   },
+  /** Get complete CIN history - all passports for a CIN */
+  getCINHistory: (cin) => {
+    return request(`/passport/history/cin/${encodeURIComponent(cin)}`, { method: "GET" });
+  },
 };
 
 export function formatError(e) {

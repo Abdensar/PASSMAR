@@ -112,6 +112,35 @@ router.get("/lookup", authenticate, requireRoles("DOUANE", "POLICE"), verifyLimi
   }
 });
 
+router.get("/history/cin/:cin", authenticate, requireRoles("DOUANE", "POLICE"), async (req, res) => {
+  const ip = req.ip || "";
+  const ua = req.get("user-agent") || "";
+  try {
+    const { cin } = req.params;
+    const data = await passportService.getCINHistory(cin);
+    await auditService.log({
+      id_agent: req.agent._id,
+      action: auditService.ACTIONS.GET_PASSPORT,
+      ip_address: ip,
+      user_agent: ua,
+      resultat: "SUCCESS",
+      details: `CIN history for ${cin}`,
+    });
+    return res.json(data);
+  } catch (e) {
+    await auditService.log({
+      id_agent: req.agent._id,
+      action: auditService.ACTIONS.GET_PASSPORT,
+      ip_address: ip,
+      user_agent: ua,
+      resultat: "FAILED",
+      details: e.message,
+    });
+    const code = e.status || 500;
+    return res.status(code).json({ error: e.message, details: e.details });
+  }
+});
+
 router.post("/renew", authenticate, requireRoles("DOUANE"), defaultWriteLimiter, async (req, res) => {
   const ip = req.ip || "";
   const ua = req.get("user-agent") || "";
@@ -153,7 +182,7 @@ router.post(
       await auditService.log({
         id_agent: req.agent._id,
         action: auditService.ACTIONS.INITIATE_REVOKE,
-        target_hash: req.body.hmac_hash,
+        target_hash: out.hmac_hash || req.body.hmac_hash || "",
         ip_address: ip,
         user_agent: ua,
         resultat: "SUCCESS",
@@ -170,7 +199,7 @@ router.post(
         details: e.message,
       });
       const code = e.status || 500;
-      return res.status(code).json({ error: e.message });
+      return res.status(code).json({ error: e.message, details: e.details });
     }
   }
 );
@@ -228,6 +257,77 @@ router.post("/revoke/reject", authenticate, requireRoles("ADMIN"), defaultWriteL
     });
     const code = e.status || 500;
     return res.status(code).json({ error: e.message });
+  }
+});
+
+// ADMIN ENDPOINT: Approve replacement passport after revocation
+// Used for FALSIFIE/DECES/JUDICIAIRE cases requiring manual approval
+router.post("/revoke/approve-replacement", authenticate, requireRoles("ADMIN"), defaultWriteLimiter, async (req, res) => {
+  const ip = req.ip || "";
+  const ua = req.get("user-agent") || "";
+  try {
+    const { id_demande, notes } = req.body;
+    
+    if (!id_demande) {
+      return res.status(400).json({ error: "CHAMPS_REQUIS", details: "id_demande required" });
+    }
+
+    const RevocationRequest = require("../models/RevocationRequest");
+    const revReq = await RevocationRequest.findById(id_demande);
+    
+    if (!revReq) {
+      return res.status(404).json({ error: "NOT_FOUND", details: "Revocation request not found" });
+    }
+
+    if (revReq.statut !== "CONFIRME") {
+      return res.status(409).json({ 
+        error: "STATUT_INVALIDE", 
+        details: "Only CONFIRME revocations can be approved for replacement" 
+      });
+    }
+
+    if (!["FALSIFIE", "DECES", "JUDICIAIRE"].includes(revReq.raison)) {
+      return res.status(409).json({
+        error: "RAISON_AUTO_APPROVED",
+        details: `Revocation reason ${revReq.raison} is auto-approved. No manual approval needed.`
+      });
+    }
+
+    // Approve the replacement
+    revReq.allow_replacement = true;
+    revReq.replacement_approved_at = new Date();
+    revReq.replacement_approved_by = req.agent._id;
+    revReq.replacement_notes = notes || "";
+    await revReq.save();
+
+    await auditService.log({
+      id_agent: req.agent._id,
+      action: auditService.ACTIONS.CONFIRM_REVOKE, // Reuse action for audit purposes
+      target_hash: revReq.hmac_hash,
+      ip_address: ip,
+      user_agent: ua,
+      resultat: "SUCCESS",
+      details: `Replacement approved for revocation ${revReq.raison}`,
+    });
+
+    return res.json({
+      id_demande: revReq._id,
+      statut: revReq.statut,
+      allow_replacement: true,
+      replacement_approved_at: revReq.replacement_approved_at,
+      message: "Replacement approved. User can now create new passport with same CIN.",
+    });
+  } catch (e) {
+    await auditService.log({
+      id_agent: req.agent._id,
+      action: auditService.ACTIONS.CONFIRM_REVOKE,
+      ip_address: ip,
+      user_agent: ua,
+      resultat: "FAILED",
+      details: e.message,
+    });
+    const code = e.status || 500;
+    return res.status(code).json({ error: e.message, details: e.details });
   }
 });
 
@@ -292,6 +392,42 @@ router.get("/:hash", authenticate, requireRoles("DOUANE", "POLICE"), async (req,
     });
     const code = e.status || 500;
     return res.status(code).json({ error: e.message, details: e.details });
+  }
+});
+
+// DEBUG ENDPOINT: Check database state for a CIN
+router.get("/debug/cin/:cin", authenticate, requireRoles("ADMIN"), async (req, res) => {
+  try {
+    const PassportOffchain = require("../models/PassportOffchain");
+    const RevocationRequest = require("../models/RevocationRequest");
+    
+    const { cin } = req.params;
+    const passports = await PassportOffchain.find({ cin }).lean();
+    const revocations = await RevocationRequest.find({
+      hmac_hash: { $in: passports.map(p => p.hmac_hash) }
+    }).lean();
+    
+    return res.json({
+      cin,
+      passports: passports.map(p => ({
+        hmac_hash: p.hmac_hash,
+        num_passeport: p.num_passeport,
+        is_current: p.is_current,
+        superseded_by: p.superseded_by,
+        supersedes: p.supersedes,
+        created_at: p.created_at,
+      })),
+      revocations: revocations.map(r => ({
+        _id: r._id,
+        hmac_hash: r.hmac_hash,
+        raison: r.raison,
+        statut: r.statut,
+        date_demande: r.date_demande,
+        date_confirmation: r.date_confirmation,
+      })),
+    });
+  } catch (e) {
+    return res.status(500).json({ error: e.message });
   }
 });
 

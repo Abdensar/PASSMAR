@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 const PassportOffchain = require("../models/PassportOffchain");
 const Renouvellement = require("../models/Renouvellement");
 const Agent = require("../models/Agent");
+const RevocationRequest = require("../models/RevocationRequest");
 const authService = require("./authService");
 const blockchainService = require("./blockchainService");
 const { encryptField, decryptField } = require("../utils/encryption");
@@ -153,14 +154,56 @@ async function createPassport(payload, agent) {
     throw err;
   }
 
-  const cinTaken = await PassportOffchain.findOne({
+  // HYBRID LOGIC FIRST: Check if CIN exists on a REVOKED passport (replacement scenario)
+  let oldHashForSupersedes = null;
+  const cinOnRevoked = await PassportOffchain.findOne({
     cin: cinTrim,
-    is_current: { $ne: false },
+    is_current: false,
   }).lean();
-  if (cinTaken) {
-    const err = new Error("PASSPORT_OR_CIN_EXISTS");
-    err.status = 409;
-    throw err;
+
+  if (cinOnRevoked) {
+    // Get revocation details to check reason
+    const revocationReq = await RevocationRequest.findOne({
+      hmac_hash: cinOnRevoked.hmac_hash,
+      statut: "CONFIRME",
+    }).lean();
+
+    if (revocationReq) {
+      // Fast path: PERDU/VOLE - auto-allow new passport creation
+      if (["PERDU", "VOLE"].includes(revocationReq.raison)) {
+        oldHashForSupersedes = cinOnRevoked.hmac_hash;
+        // ✅ Allow creation - will link via supersedes chain
+      } else {
+        // Slow path: FALSIFIE/DECES/JUDICIAIRE - require admin approval
+        // Check if admin has approved replacement
+        if (!revocationReq.allow_replacement) {
+          const err = new Error("REVOCATION_REQUIRES_ADMIN_APPROVAL");
+          err.status = 409;
+          err.details = `Ce passeport a été révoqué pour raison: ${revocationReq.raison}. L'administration doit approuver le remplacement avant création.`;
+          throw err;
+        }
+        oldHashForSupersedes = cinOnRevoked.hmac_hash;
+        // ✅ Allow creation - admin has pre-approved
+      }
+    } else {
+      // CIN on non-active passport but no confirmed revocation found
+      const err = new Error("PASSPORT_OR_CIN_EXISTS");
+      err.status = 409;
+      throw err;
+    }
+  }
+
+  // NOW check if CIN is taken by ANOTHER active passport (only if not in revocation replacement scenario)
+  if (!oldHashForSupersedes) {
+    const cinTaken = await PassportOffchain.findOne({
+      cin: cinTrim,
+      is_current: { $ne: false },
+    }).lean();
+    if (cinTaken) {
+      const err = new Error("PASSPORT_OR_CIN_EXISTS");
+      err.status = 409;
+      throw err;
+    }
   }
 
   const exists = await blockchainService.safeCall(() => blockchainService.existsOnChain(hmac_hash));
@@ -198,7 +241,7 @@ async function createPassport(payload, agent) {
   const txHash = bc.data.txHash;
 
   try {
-    await PassportOffchain.create({
+    const newPassportData = {
       hmac_hash,
       nom,
       prenom,
@@ -214,7 +257,24 @@ async function createPassport(payload, agent) {
       id_agent_createur: agent._id,
       tx_hash_creation: txHash,
       is_current: true,
-    });
+    };
+
+    // Link to old revoked passport if this is a replacement
+    if (oldHashForSupersedes) {
+      newPassportData.supersedes = oldHashForSupersedes;
+      // Also update old passport to point to new one AND mark as inactive
+      await PassportOffchain.updateOne(
+        { hmac_hash: oldHashForSupersedes },
+        {
+          $set: {
+            superseded_by: hmac_hash,
+            is_current: false,
+          },
+        }
+      );
+    }
+
+    await PassportOffchain.create(newPassportData);
   } catch (e) {
     const err = new Error("MONGO_AFTER_CHAIN_FAILURE");
     err.status = 500;
@@ -466,6 +526,29 @@ async function renewPassport(payload, agent) {
     throw err;
   }
 
+  // FIX 1: CHECK FOR PENDING/CONFIRMED REVOCATION
+  // User cannot renew a passport that has an active revocation request
+  const revocationRequest = await RevocationRequest.findOne({
+    hmac_hash: oldHash,
+    statut: { $in: ["EN_ATTENTE", "CONFIRME"] }
+  });
+  if (revocationRequest) {
+    const err = new Error("REVOCATION_PENDING_OR_CONFIRMED");
+    err.status = 409;
+    
+    if (revocationRequest.statut === "EN_ATTENTE") {
+      // Revocation still pending admin review
+      err.details = `Une demande de révocation est en attente pour ce passeport (ID: ${revocationRequest._id}). Attendez la décision de l'admin avant de renouveler.`;
+    } else if (["PERDU", "VOLE"].includes(revocationRequest.raison)) {
+      // Fast path: For lost/stolen, guide user to CREATE instead
+      err.details = `Ce passeport a été marqué comme ${revocationRequest.raison === "PERDU" ? "PERDU" : "VOLÉ"}. Créez un NOUVEAU passeport au lieu de le renouveler. Utilisez le même CIN via POST /passport/create.`;
+    } else {
+      // Slow path: For other reasons, require admin assistance
+      err.details = `Ce passeport a été révoqué pour raison: ${revocationRequest.raison}. Contactez l'administration pour assistance.`;
+    }
+    throw err;
+  }
+
   const existsNew = await PassportOffchain.findOne({ hmac_hash: newHash });
   if (existsNew) {
     const err = new Error("NEW_HASH_EXISTS");
@@ -484,6 +567,31 @@ async function renewPassport(payload, agent) {
   const preRenew = await blockchainService.safeCall(() => blockchainService.getPassportOnChain(oldHash));
   if (preRenew.ok) {
     const r = preRenew.data;
+    const statutEffectif = r.statutEffectif ?? r[8];
+
+    // FIX 2: CHECK ON-CHAIN STATUS - CANNOT RENEW IF REVOQUE/PERDU
+    // After revocation is confirmed, status becomes REVOQUE on-chain
+    if (statutEffectif === "REVOQUE") {
+      const err = new Error("PASSEPORT_REVOQUE");
+      err.status = 409;
+      // Try to get revocation reason from on-chain data for better guidance
+      const raison = r.raisonRevocation ?? r[3];
+      if (["PERDU", "VOLE"].includes(raison)) {
+        err.details = `Ce passeport a été marqué comme ${raison === "PERDU" ? "PERDU" : "VOLÉ"} sur la chaîne. Créez un NOUVEAU passeport au lieu de le renouveler. Utilisez le même CIN via POST /passport/create.`;
+      } else {
+        err.details = `Ce passeport a été révoqué sur la chaîne (raison: ${raison}). Contactez l'administration pour assistance.`;
+      }
+      throw err;
+    }
+
+    if (statutEffectif === "PERDU") {
+      const err = new Error("PASSEPORT_PERDU_ONCHAIN");
+      err.status = 409;
+      err.details = "Ce passeport est marqué comme PERDU sur la chaîne. Créez un NOUVEAU passeport au lieu de le renouveler. Utilisez le même CIN via POST /passport/create.";
+      throw err;
+    }
+
+    // Check if already renewed
     const renewedOld = typeof r.renewed === "boolean" ? r.renewed : r[7];
     if (renewedOld) {
       const err = new Error("PASSEPORT_DEJA_RENOUVELE");
@@ -640,6 +748,79 @@ async function setTravelBan(hmac_hash, interdiction, _admin) {
   return { hmac_hash, interdiction_sortie: Boolean(interdiction), tx_hash: bc.data.txHash };
 }
 
+/** Get complete CIN history - all passports for a CIN with their revocation status */
+async function getCINHistory(cin) {
+  if (!cin) {
+    const err = new Error("CIN_REQUIS");
+    err.status = 400;
+    throw err;
+  }
+
+  const cinTrim = String(cin).trim();
+
+  // Get all passports with this CIN
+  const allPassports = await PassportOffchain.find({ cin: cinTrim })
+    .sort({ created_at: 1 })
+    .lean();
+
+  if (!allPassports || allPassports.length === 0) {
+    const err = new Error("NOT_FOUND");
+    err.status = 404;
+    throw err;
+  }
+
+  // For each passport, get revocation and renewal info
+  const enrichedPassports = await Promise.all(
+    allPassports.map(async (passport) => {
+      // Get revocation details if any
+      const revocationReq = await RevocationRequest.findOne({
+        hmac_hash: passport.hmac_hash,
+        statut: "CONFIRME",
+      })
+        .select("raison statut date_confirmation date_demande allow_replacement")
+        .lean();
+
+      // Build status
+      let status = "ACTIF";
+      if (passport.is_current === false) {
+        if (revocationReq) {
+          status = `REVOQUE (${revocationReq.raison})`;
+        } else if (passport.superseded_by) {
+          status = "REMPLACE";
+        }
+      }
+
+      return {
+        hmac_hash: passport.hmac_hash,
+        num_passeport: passport.num_passeport,
+        mrz: passport.mrz,
+        created_at: passport.created_at,
+        is_current: isOffchainCurrent(passport),
+        status,
+        lifecycle: {
+          supersedes: passport.supersedes || null,
+          superseded_by: passport.superseded_by || null,
+        },
+        revocation: revocationReq
+          ? {
+              raison: revocationReq.raison,
+              date_demande: revocationReq.date_demande,
+              date_confirmation: revocationReq.date_confirmation,
+              allow_replacement: revocationReq.allow_replacement,
+            }
+          : null,
+      };
+    })
+  );
+
+  return {
+    cin: cinTrim,
+    total: enrichedPassports.length,
+    current: enrichedPassports.find((p) => p.is_current),
+    history: enrichedPassports,
+  };
+}
+
 module.exports = {
   createPassport,
   verifyPassport,
@@ -647,6 +828,7 @@ module.exports = {
   getByHashForAgent,
   renewPassport,
   setTravelBan,
+  getCINHistory,
   toUnixSeconds,
   isOffchainCurrent,
 };

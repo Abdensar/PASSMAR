@@ -21,7 +21,7 @@ export default function PoliceTravelHistoryPage() {
     setLoading(true);
     try {
       const cred = await api.lookupPassport(num.trim(), mrz.trim());
-      const h = cred?.active_hmac_hash || cred?.offchain?.hmac_hash;
+      const h = cred?.offchain?.hmac_hash || cred?.hmac_hash;
       if (!h) {
         const err = new Error("Impossible de déterminer le passeport actif");
         err.status = 500;
@@ -110,47 +110,95 @@ export default function PoliceTravelHistoryPage() {
           className="rounded-xl border border-gray-200 dark:border-gray-700 bg-surface-light dark:bg-surface-dark overflow-hidden shadow-sm"
           aria-live="polite"
         >
-          <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-blockchain/10">
-            <h2 className="text-sm font-semibold text-text-light dark:text-text">Mouvements enregistrés</h2>
-            {history.onchain_count != null && (
-              <p className="text-xs text-muted-light dark:text-muted mt-1">Preuves on-chain : {history.onchain_count}</p>
-            )}
+          <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700 bg-gradient-to-r from-blockchain/10 to-blockchain/5 dark:from-blockchain/20 dark:to-blockchain/10">
+            <div className="flex justify-between items-center">
+              <div>
+                <h2 className="text-lg font-bold text-text-light dark:text-text">Mouvements Enregistrés</h2>
+                <p className="text-xs text-muted-light dark:text-muted mt-1">
+                  Tous les passages frontières pour ce passeport
+                </p>
+              </div>
+              {history.onchain_count != null && (
+                <span className="bg-blockchain/15 dark:bg-blockchain/25 text-blockchain-light dark:text-blockchain px-3 py-1 rounded-full text-sm font-semibold">
+                  {history.onchain_count} sur chaîne
+                </span>
+              )}
+            </div>
           </div>
-          <div className="overflow-x-auto">
+          
+          <div className="p-6">
             {offchainTravels.length > 0 ? (
-              <table className="w-full text-sm text-left">
-                <thead className="bg-background-light dark:bg-background/80 text-muted-light dark:text-muted uppercase text-xs">
-                  <tr>
-                    <th className="px-4 py-3">Type</th>
-                    <th className="px-4 py-3">Checkpoint</th>
-                    <th className="px-4 py-3">Date</th>
-                    <th className="px-4 py-3">Détails</th>
-                  </tr>
-                </thead>
-                <tbody className="text-text-light dark:text-text">
-                  {offchainTravels.map((travel) => (
-                    <tr
-                      key={travel.tx_hash}
-                      className="border-t border-gray-100 dark:border-gray-700/80 hover:bg-background-light/60 dark:hover:bg-background/30"
-                    >
-                      <td className="px-4 py-3 whitespace-nowrap">
-                        {travel.type_mvt === "ENT" ? "Entrée" : "Sortie"}
-                      </td>
-                      <td className="px-4 py-3">{travel.checkpoint}</td>
-                      <td className="px-4 py-3 whitespace-nowrap">
-                        {new Date(travel.created_at || travel.date_passage).toLocaleString("fr-FR")}
-                      </td>
-                      <td className="px-4 py-3 max-w-xs truncate" title={travel.details || ""}>
-                        {travel.details || "—"}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {offchainTravels.map((travel, idx) => (
+                  <div
+                    key={travel._id || travel.tx_hash || idx}
+                    className="bg-background-light dark:bg-background border border-gray-200 dark:border-gray-600 rounded-lg p-4 hover:border-primary-light dark:hover:border-primary hover:shadow-md transition-all"
+                  >
+                    {/* Type + Date Header */}
+                    <div className="flex justify-between items-start mb-4">
+                      <div className="flex items-center gap-3">
+                        <span className="text-3xl">
+                          {travel.type_mvt === "ENT" ? "📥" : "📤"}
+                        </span>
+                        <div>
+                          <p className="font-bold text-text-light dark:text-text">
+                            {travel.type_mvt === "ENT" ? "Entrée" : "Sortie"}
+                          </p>
+                          <p className="text-xs text-muted-light dark:text-muted">
+                            {new Date(travel.created_at || travel.date_passage).toLocaleDateString("fr-FR")}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Checkpoint */}
+                    <div className="mb-3 pb-3 border-b border-gray-200 dark:border-gray-700">
+                      <p className="text-xs text-muted-light dark:text-muted font-medium uppercase tracking-wide mb-1">
+                        Poste Frontière
+                      </p>
+                      <p className="font-semibold text-text-light dark:text-text">
+                        {travel.checkpoint || "—"}
+                      </p>
+                    </div>
+
+                    {/* Origin/Destination */}
+                    <div className="mb-3">
+                      <p className="text-xs text-muted-light dark:text-muted font-medium uppercase tracking-wide mb-1">
+                        {travel.type_mvt === "ENT" ? "Provenance" : "Destination"}
+                      </p>
+                      <p className="font-semibold text-text-light dark:text-text">
+                        {travel.type_mvt === "ENT"
+                          ? travel.provenance || "—"
+                          : travel.destination || "—"}
+                      </p>
+                    </div>
+
+                    {/* Details */}
+                    {travel.details && (
+                      <div className="mb-3 p-3 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-200 dark:border-blue-700">
+                        <p className="text-xs text-muted-light dark:text-muted font-medium mb-1">Observations</p>
+                        <p className="text-sm text-text-light dark:text-text">{travel.details}</p>
+                      </div>
+                    )}
+
+                    {/* Transaction Hash */}
+                    {travel.tx_hash && (
+                      <div className="text-xs text-muted-light dark:text-muted font-mono pt-2 border-t border-gray-200 dark:border-gray-700">
+                        <p className="truncate">🔗 {travel.tx_hash.substring(0, 20)}...</p>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
             ) : (
-              <p className="p-6 text-muted-light dark:text-muted text-sm">
-                Aucun voyage enregistré pour le passeport actif.
-              </p>
+              <div className="text-center py-12">
+                <p className="text-lg text-muted-light dark:text-muted mb-2">
+                  ✈️ Aucun voyage enregistré
+                </p>
+                <p className="text-sm text-muted-light dark:text-muted">
+                  Les mouvements frontières apparaîtront ici une fois enregistrés.
+                </p>
+              </div>
             )}
           </div>
         </section>
