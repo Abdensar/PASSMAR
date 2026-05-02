@@ -169,8 +169,8 @@ async function createPassport(payload, agent) {
     }).lean();
 
     if (revocationReq) {
-      // Fast path: PERDU/VOLE - auto-allow new passport creation
-      if (["PERDU", "VOLE"].includes(revocationReq.raison)) {
+      // Fast path: PERDU/VOLE/MODIFICATION_INFO - auto-allow new passport creation
+      if (["PERDU", "VOLE", "MODIFICATION_INFO"].includes(revocationReq.raison)) {
         oldHashForSupersedes = cinOnRevoked.hmac_hash;
         // ✅ Allow creation - will link via supersedes chain
       } else {

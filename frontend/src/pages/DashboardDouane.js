@@ -300,7 +300,13 @@ export default function DashboardDouane({ agent, onLogout }) {
           <div className="max-w-2xl">
             <h2 className="text-2xl font-bold mb-6 text-text-light dark:text-text">Révocation de Passeport</h2>
             <div className="bg-surface-light dark:bg-surface-dark border border-gray-200 dark:border-gray-700 rounded-xl p-6">
-              <p className="text-text-light dark:text-text mb-4">Initier une demande de révocation (validation admin requise)</p>
+              <p className="text-text-light dark:text-text mb-4">
+                Initier une demande de révocation 
+                <span className="text-sm text-muted-light dark:text-muted block mt-1">
+                  • VOLÉ/PERDU/MODIFICATION INFO: Auto-approuvé (pas d'admin requis)<br/>
+                  • FALSIFIÉ/DÉCÈS/JUDICIAIRE: Validation admin requise
+                </span>
+              </p>
               <form onSubmit={submitRevoke} className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-text-light dark:text-text mb-2">
@@ -339,6 +345,7 @@ export default function DashboardDouane({ agent, onLogout }) {
                   >
                     <option value="VOLE">VOLÉ</option>
                     <option value="PERDU">PERDU</option>
+                    <option value="MODIFICATION_INFO">MODIFICATION INFO CLIENT</option>
                     <option value="FALSIFIE">FALSIFIÉ</option>
                     <option value="DECES">DÉCÈS</option>
                     <option value="JUDICIAIRE">JUDICIAIRE</option>

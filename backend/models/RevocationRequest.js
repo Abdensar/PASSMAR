@@ -9,7 +9,7 @@ const revocationRequestSchema = new mongoose.Schema(
     id_agent_confirm: { type: String, ref: "Agent", default: null },
     raison: {
       type: String,
-      enum: ["VOLE", "PERDU", "FALSIFIE", "DECES", "JUDICIAIRE"],
+      enum: ["VOLE", "PERDU", "FALSIFIE", "DECES", "JUDICIAIRE", "MODIFICATION_INFO"],
       required: true,
     },
     statut: {

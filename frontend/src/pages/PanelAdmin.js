@@ -12,6 +12,7 @@ export default function PanelAdmin({ agent, onLogout }) {
   const [currentPage, setCurrentPage] = useState("agents");
   const [agents, setAgents] = useState([]);
   const [pending, setPending] = useState([]);
+  const [confirmedNeedsReplacement, setConfirmedNeedsReplacement] = useState([]);
   const [stats, setStats] = useState(null);
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -43,13 +44,15 @@ export default function PanelAdmin({ agent, onLogout }) {
   async function refreshLists() {
     setLoading(true);
     try {
-      const [a, p, s] = await Promise.all([
+      const [a, p, c, s] = await Promise.all([
         api.get("/admin/agents"),
         api.get("/revocation/pending"),
+        api.get("/revocation/confirmed-needs-replacement"),
         api.get("/admin/stats"),
       ]);
       setAgents(a.items || []);
       setPending(p.items || []);
+      setConfirmedNeedsReplacement(c.items || []);
       setStats(s);
     } catch (ex) {
       toast.error(formatError(ex));
@@ -133,6 +136,26 @@ export default function PanelAdmin({ agent, onLogout }) {
     }
   }
 
+  async function approveReplacement(id) {
+    if (!window.confirm("Approuver le remplacement de ce passeport révoqué ?")) return;
+    setResult(null);
+    setLoading(true);
+    try {
+      const out = await api.post("/passport/revoke/approve-replacement", {
+        id_demande: id,
+        notes: "Approved for replacement by admin",
+      });
+      setResult({ code: 200, message: "Remplacement approuvé", data: out });
+      toast.success("Remplacement approuvé !");
+      refreshLists();
+    } catch (ex) {
+      setResult({ code: ex.response?.status || 500, message: formatError(ex) });
+      toast.error(formatError(ex));
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function applyBan(e) {
     e.preventDefault();
     setResult(null);
@@ -207,9 +230,9 @@ export default function PanelAdmin({ agent, onLogout }) {
         );
       case "revocations":
         return (
-          <div className="max-w-4xl">
+          <div className="max-w-6xl">
             <div className="flex justify-between items-center mb-6">
-              <h2 className="text-2xl font-bold text-white">Demandes de Révocation</h2>
+              <h2 className="text-2xl font-bold text-white">Gestion des Révocations</h2>
               <button
                 onClick={refreshLists}
                 disabled={loading}
@@ -218,40 +241,79 @@ export default function PanelAdmin({ agent, onLogout }) {
                 Rafraîchir
               </button>
             </div>
-            <div className="space-y-4">
-              {pending.map((r) => (
-                <div key={r._id} className="bg-gray-800/50 border border-gray-700 rounded-xl p-6">
-                  <div className="flex justify-between items-start mb-4">
-                    <div>
-                      <h3 className="text-lg font-semibold text-white mb-2">Demande #{r._id}</h3>
-                      <p className="text-gray-300 mb-2">Raison: {r.raison}</p>
-                      <HashDisplay hash={r.hmac_hash} label="Hash du Passeport" />
-                    </div>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => confirmRevoke(r._id)}
-                        disabled={loading}
-                        className="bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white font-semibold py-2 px-4 rounded-lg transition-colors"
-                      >
-                        Confirmer
-                      </button>
-                      <button
-                        onClick={() => rejectRevoke(r._id, 'Rejetée par admin')}
-                        disabled={loading}
-                        className="bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white font-semibold py-2 px-4 rounded-lg transition-colors"
-                      >
-                        Rejeter
-                      </button>
+            
+            {/* Pending Revocations */}
+            <div className="mb-8">
+              <h3 className="text-xl font-semibold text-white mb-4">Demandes en Attente de Confirmation</h3>
+              <div className="space-y-4">
+                {pending.map((r) => (
+                  <div key={r._id} className="bg-gray-800/50 border border-gray-700 rounded-xl p-6">
+                    <div className="flex justify-between items-start mb-4">
+                      <div>
+                        <h4 className="text-lg font-semibold text-white mb-2">Demande #{r._id}</h4>
+                        <p className="text-gray-300 mb-2">Raison: {r.raison}</p>
+                        <HashDisplay hash={r.hmac_hash} label="Hash du Passeport" />
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => confirmRevoke(r._id)}
+                          disabled={loading}
+                          className="bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white font-semibold py-2 px-4 rounded-lg transition-colors"
+                        >
+                          Confirmer Révocation
+                        </button>
+                        <button
+                          onClick={() => rejectRevoke(r._id, 'Rejetée par admin')}
+                          disabled={loading}
+                          className="bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white font-semibold py-2 px-4 rounded-lg transition-colors"
+                        >
+                          Rejeter
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
-              {pending.length === 0 && (
-                <div className="text-center py-8">
-                  <p className="text-gray-400">Aucune demande de révocation en attente</p>
-                </div>
-              )}
+                ))}
+                {pending.length === 0 && (
+                  <div className="text-center py-8 bg-gray-800/30 rounded-xl">
+                    <p className="text-gray-400">Aucune demande de révocation en attente</p>
+                  </div>
+                )}
+              </div>
             </div>
+
+            {/* Confirmed Revocations Needing Replacement Approval */}
+            <div>
+              <h3 className="text-xl font-semibold text-white mb-4">Révocations Confirmées - Approbation de Remplacement Requise</h3>
+              <div className="space-y-4">
+                {confirmedNeedsReplacement.map((r) => (
+                  <div key={r._id} className="bg-orange-900/20 border border-orange-700 rounded-xl p-6">
+                    <div className="flex justify-between items-start mb-4">
+                      <div>
+                        <h4 className="text-lg font-semibold text-white mb-2">Révocation Confirmée #{r._id}</h4>
+                        <p className="text-gray-300 mb-2">Raison: {r.raison}</p>
+                        <p className="text-sm text-orange-300 mb-2">Confirmée le: {new Date(r.date_confirmation).toLocaleDateString('fr-FR')}</p>
+                        <HashDisplay hash={r.hmac_hash} label="Hash du Passeport Révoqué" />
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => approveReplacement(r._id)}
+                          disabled={loading}
+                          className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold py-2 px-4 rounded-lg transition-colors"
+                        >
+                          Approuver Remplacement
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                {confirmedNeedsReplacement.length === 0 && (
+                  <div className="text-center py-8 bg-gray-800/30 rounded-xl">
+                    <p className="text-gray-400">Aucune révocation ne nécessite d'approbation de remplacement</p>
+                  </div>
+                )}
+              </div>
+            </div>
+            
             {result && <AlertResult {...result} />}
           </div>
         );

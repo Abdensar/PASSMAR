@@ -14,6 +14,20 @@ const COOKIE_BASE = {
   path: "/",
 };
 
+function durationToMs(value) {
+  const match = /^(\d+)(s|m|h|d)?$/.exec(String(value).trim());
+  if (!match) throw new Error("Invalid duration: " + value);
+  const amount = Number(match[1]);
+  const unit = match[2] || "s";
+  switch (unit) {
+    case "s": return amount * 1000;
+    case "m": return amount * 60 * 1000;
+    case "h": return amount * 60 * 60 * 1000;
+    case "d": return amount * 24 * 60 * 60 * 1000;
+    default: throw new Error("Unsupported duration unit: " + unit);
+  }
+}
+
 router.post("/login", loginLimiter, async (req, res) => {
   const ip = req.ip || req.socket.remoteAddress || "";
   const ua = req.get("user-agent") || "";
@@ -77,8 +91,11 @@ router.post("/login", loginLimiter, async (req, res) => {
     const access = authService.signAccessToken(agent);
     const refresh = authService.signRefreshToken(agent);
 
-    res.cookie("access_token", access, { ...COOKIE_BASE, maxAge: 15 * 60 * 1000 });
-    res.cookie("refresh_token", refresh, { ...COOKIE_BASE, maxAge: 8 * 60 * 60 * 1000 });
+    const accessMaxAge = durationToMs(authService.JWT_EXPIRY);
+    const refreshMaxAge = durationToMs(authService.REFRESH_EXPIRY);
+
+    res.cookie("access_token", access, { ...COOKIE_BASE, maxAge: accessMaxAge });
+    res.cookie("refresh_token", refresh, { ...COOKIE_BASE, maxAge: refreshMaxAge });
 
     agent.last_login = new Date();
     await agent.save();
@@ -158,7 +175,7 @@ router.post("/refresh", async (req, res) => {
       return res.status(401).json({ error: "Agent invalide" });
     }
     const access = authService.signAccessToken(agent);
-    res.cookie("access_token", access, { ...COOKIE_BASE, maxAge: 15 * 60 * 1000 });
+    res.cookie("access_token", access, { ...COOKIE_BASE, maxAge: 8 * 60 * 60 * 1000 });
     await auditService.log({
       id_agent: agent._id,
       action: auditService.ACTIONS.REFRESH,

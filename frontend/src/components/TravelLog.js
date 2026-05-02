@@ -297,9 +297,6 @@ export default function TravelLog() {
       <div>
         <h2 className="text-2xl font-bold mb-6 text-text-light dark:text-text">Consulter Historique de Voyages</h2>
         <div className="bg-surface-light dark:bg-surface-dark border border-gray-200 dark:border-gray-700 rounded-xl p-6">
-          <p className="text-sm text-muted-light dark:text-muted mb-4">
-            Entrez le hash HMAC du passeport pour consulter tous les mouvements enregistrés.
-          </p>
           <form onSubmit={loadHistory} className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>

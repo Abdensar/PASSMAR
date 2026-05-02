@@ -9,6 +9,7 @@ const RAISON_LABEL = {
   FALSIFIE: "FALSIFIÉ",
   DECES: "DÉCÈS",
   JUDICIAIRE: "JUDICIAIRE",
+  MODIFICATION_INFO: "MODIFICATION INFO CLIENT",
 };
 
 async function initiateRevoke({ hmac_hash, num_passeport, mrz, raison }, agent) {
@@ -80,6 +81,16 @@ async function initiateRevoke({ hmac_hash, num_passeport, mrz, raison }, agent) 
 async function listPending() {
   return RevocationRequest.find({ statut: "EN_ATTENTE" })
     .sort({ date_demande: -1 })
+    .lean();
+}
+
+async function listConfirmedNeedsReplacement() {
+  return RevocationRequest.find({
+    statut: "CONFIRME",
+    raison: { $in: ["FALSIFIE", "DECES", "JUDICIAIRE"] },
+    allow_replacement: false,
+  })
+    .sort({ date_confirmation: -1 })
     .lean();
 }
 
@@ -173,6 +184,7 @@ async function rejectRevoke({ id_demande, notes }, admin) {
 module.exports = {
   initiateRevoke,
   listPending,
+  listConfirmedNeedsReplacement,
   listAll,
   confirmRevoke,
   rejectRevoke,
