@@ -39,8 +39,10 @@ export const api = {
   refresh: () => request("/auth/refresh", { method: "POST" }),
   /** Consulter passeport complet par numéro + MRZ (DOUANE / POLICE). */
   lookupPassport: (num, mrz) => {
-    const q = new URLSearchParams({ num, mrz }).toString();
-    return request(`/passport/lookup?${q}`, { method: "GET" });
+    const params = new URLSearchParams();
+    params.append("num", num);
+    if (mrz) params.append("mrz", mrz);
+    return request(`/passport/lookup?${params.toString()}`, { method: "GET" });
   },
   /** Get complete CIN history - all passports for a CIN */
   getCINHistory: (cin) => {

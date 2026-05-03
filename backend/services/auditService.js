@@ -47,7 +47,7 @@ async function log({
   }
 }
 
-async function list(filters = {}, { limit = 200, skip = 0 } = {}) {
+async function list(filters = {}, { limit = 200, skip = 0, populate = false } = {}) {
   const q = {};
   if (filters.id_agent) q.id_agent = filters.id_agent;
   if (filters.action) q.action = filters.action;
@@ -57,8 +57,23 @@ async function list(filters = {}, { limit = 200, skip = 0 } = {}) {
     if (filters.from) q.created_at.$gte = new Date(filters.from);
     if (filters.to) q.created_at.$lte = new Date(filters.to);
   }
+  if (filters.agent_name) {
+    const Agent = require("../models/Agent");
+    const matchedAgents = await Agent.find({ identifiant: { $regex: filters.agent_name, $options: "i" } })
+      .select("_id")
+      .lean();
+    if (!matchedAgents.length) {
+      return { items: [], total: 0 };
+    }
+    q.id_agent = { $in: matchedAgents.map((a) => a._id) };
+  }
+
+  const query = AuditLog.find(q).sort({ created_at: -1 }).skip(skip).limit(Math.min(limit, 500));
+  if (populate) {
+    query.populate(populate, "identifiant role eth_address");
+  }
   const [items, total] = await Promise.all([
-    AuditLog.find(q).sort({ created_at: -1 }).skip(skip).limit(Math.min(limit, 500)).lean(),
+    query.lean(),
     AuditLog.countDocuments(q),
   ]);
   return { items, total };

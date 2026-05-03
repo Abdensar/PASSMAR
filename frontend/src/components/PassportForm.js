@@ -11,12 +11,11 @@ export default function PassportForm() {
     prenom: "",
     cin: "",
     num_passeport: "",
-    mrz: "",
+    sex: "M",
     date_naissance: "",
     lieu_naissance: "",
     adresse: "",
     nationalite: "Marocaine",
-    date_expiration: "",
     photo_url: "",
     biometrie: "",
   });
@@ -32,10 +31,14 @@ export default function PassportForm() {
     setResult(null);
     setLoading(true);
     try {
+      // Calculate expiration date as 5 years from now
+      const expirationDate = new Date();
+      expirationDate.setFullYear(expirationDate.getFullYear() + 5);
+      
       const payload = {
         ...form,
         date_naissance: form.date_naissance ? new Date(form.date_naissance).toISOString() : "",
-        date_expiration: form.date_expiration ? new Date(form.date_expiration).toISOString() : "",
+        sex: form.sex,
       };
       const out = await api.post("/passport/create", payload);
       setResult({ code: 200, message: "Passeport créé avec succès", data: out });
@@ -128,18 +131,6 @@ export default function PassportForm() {
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-300 mb-2">
-                Date d'Expiration
-              </label>
-              <input
-                type="date"
-                value={form.date_expiration}
-                onChange={(e) => setField("date_expiration", e.target.value)}
-                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
                 Nationalité
               </label>
               <input
@@ -149,18 +140,19 @@ export default function PassportForm() {
                 className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary"
               />
             </div>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">
-              MRZ
-            </label>
-            <input
-              type="text"
-              value={form.mrz}
-              onChange={(e) => setField("mrz", e.target.value)}
-              className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary"
-              required
-            />
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">
+                Sexe
+              </label>
+              <select
+                value={form.sex}
+                onChange={(e) => setField("sex", e.target.value)}
+                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary"
+              >
+                <option value="M">M</option>
+                <option value="F">F</option>
+              </select>
+            </div>
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-300 mb-2">
@@ -211,21 +203,80 @@ export default function PassportForm() {
           </button>
         </form>
       </div>
-      {result && (
-        <div className="mt-6">
-          <AlertResult {...result} />
-          {result.data && result.data.hmac_hash && (
-            <div className="mt-4">
-              <HashDisplay hash={result.data.hmac_hash} label="Hash HMAC du Passeport" />
+      {result && result.code === 200 && result.data && (
+        <div className="mt-6 bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-900/30 dark:to-emerald-900/30 border-2 border-green-300 dark:border-green-700 rounded-xl p-6 shadow-lg">
+          <div className="flex items-start gap-4">
+            <div className="text-4xl">✅</div>
+            <div className="flex-1">
+              <h3 className="text-xl font-bold text-green-800 dark:text-green-300 mb-4">
+                Passeport Créé avec Succès
+              </h3>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Passport Number */}
+                <div className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-green-200 dark:border-green-700">
+                  <p className="text-xs text-muted-light dark:text-muted uppercase font-bold tracking-wide mb-1">N° Passeport</p>
+                  <p className="text-lg font-bold text-text-light dark:text-text">{form.num_passeport}</p>
+                </div>
+
+                {/* Full Name */}
+                <div className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-green-200 dark:border-green-700">
+                  <p className="text-xs text-muted-light dark:text-muted uppercase font-bold tracking-wide mb-1">Nom Complet</p>
+                  <p className="text-lg font-bold text-text-light dark:text-text">{form.prenom} {form.nom}</p>
+                </div>
+
+                {/* Sexe */}
+                <div className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-green-200 dark:border-green-700">
+                  <p className="text-xs text-muted-light dark:text-muted uppercase font-bold tracking-wide mb-1">Sexe</p>
+                  <p className="text-lg font-bold text-text-light dark:text-text">{form.sex}</p>
+                </div>
+
+                {/* CIN */}
+                <div className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-green-200 dark:border-green-700">
+                  <p className="text-xs text-muted-light dark:text-muted uppercase font-bold tracking-wide mb-1">CIN</p>
+                  <p className="text-lg font-bold text-text-light dark:text-text">{form.cin}</p>
+                </div>
+
+                {/* Expiration Date */}
+                <div className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-green-200 dark:border-green-700">
+                  <p className="text-xs text-muted-light dark:text-muted uppercase font-bold tracking-wide mb-1">Date d'Expiration</p>
+                  <p className="text-lg font-bold text-text-light dark:text-text">
+                    {result.data.date_expiration ? new Date(result.data.date_expiration).toLocaleDateString("fr-FR") : new Date(Date.now() + 5 * 365 * 24 * 60 * 60 * 1000).toLocaleDateString("fr-FR")}
+                  </p>
+                </div>
+
+                {/* MRZ */}
+                <div className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-green-200 dark:border-green-700 md:col-span-2">
+                  <p className="text-xs text-muted-light dark:text-muted uppercase font-bold tracking-wide mb-1">MRZ</p>
+                  <pre className="text-sm font-mono text-text-light dark:text-text break-all whitespace-pre-wrap">{result.data.mrz}</pre>
+                </div>
+              </div>
+
+              {/* Blockchain Proof */}
+              {result.data.tx_hash_creation && (
+                <div className="mt-4 bg-white dark:bg-gray-800 rounded-lg p-4 border-2 border-blue-300 dark:border-blue-600">
+                  <p className="text-xs text-muted-light dark:text-muted uppercase font-bold tracking-wide mb-3">
+                    ⛓️ Preuve Blockchain
+                  </p>
+                  <BlockchainProof txHash={result.data.tx_hash_creation} />
+                </div>
+              )}
+
+              {/* Passport Hash */}
+              {result.data.hmac_hash && (
+                <div className="mt-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg p-3 border border-blue-200 dark:border-blue-700">
+                  <p className="text-xs text-muted-light dark:text-muted font-mono mb-2">Hash HMAC du Passeport</p>
+                  <p className="text-xs font-mono text-text-light dark:text-text break-all">
+                    {result.data.hmac_hash}
+                  </p>
+                </div>
+              )}
             </div>
-          )}
-          {result.data && result.data.tx_hash_creation && (
-            <div className="mt-4">
-              <BlockchainProof txHash={result.data.tx_hash_creation} />
-            </div>
-          )}
+          </div>
         </div>
       )}
+      
+      {result && result.code !== 200 && <AlertResult {...result} />}
     </div>
   );
 }

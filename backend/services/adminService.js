@@ -39,7 +39,7 @@ async function createAgent(payload) {
     role,
     id_autorite,
     nom_autorite,
-    type_autorite,
+    type_autorite = role,
     adresse_ip,
   } = payload;
 

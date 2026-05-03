@@ -72,6 +72,19 @@ async function enrichOffchainCreatorIdent(doc) {
   return { ...doc, agent_createur_identifiant: ag?.identifiant || null };
 }
 
+function normalizePassportNumber(num) {
+  return String(num || "").trim().toUpperCase();
+}
+
+function escapeRegex(value) {
+  return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function passportNumberQuery(num) {
+  const normalized = normalizePassportNumber(num);
+  return { num_passeport: { $regex: `^${escapeRegex(normalized)}$`, $options: "i" } };
+}
+
 /** Ajoute motif + tx du renouvellement pour chaque version après la première. */
 async function attachRenewalMotifsToChain(summaries) {
   const out = summaries.map((s) => ({ ...s }));
@@ -123,34 +136,54 @@ async function createPassport(payload, agent) {
     prenom,
     cin,
     num_passeport,
-    mrz,
     photo_url,
     biometrie,
     date_naissance,
     lieu_naissance,
     adresse,
     nationalite,
-    date_expiration,
+    sex,
   } = payload;
 
-  if (!nom || !prenom || !cin || !num_passeport || !mrz || !date_naissance || !lieu_naissance) {
+  if (!nom || !prenom || !cin || !num_passeport || !sex || !date_naissance || !lieu_naissance) {
     const err = new Error("CHAMPS_REQUIS");
     err.status = 400;
     throw err;
   }
-  if (!date_expiration) {
-    const err = new Error("DATE_EXPIRATION_REQUISE");
-    err.status = 400;
-    throw err;
-  }
 
-  const hmac_hash = authService.generatePassportHmac(num_passeport, mrz);
+  const normalizedPassportNumber = normalizePassportNumber(num_passeport);
   const cinTrim = String(cin).trim();
+  const expirationDate = new Date();
+  expirationDate.setFullYear(expirationDate.getFullYear() + 5);
+  const formattedExpiryDate = expirationDate.toISOString().split("T")[0];
+  const mrzResult = authService.generateMoroccanMRZ({
+    surname: nom,
+    givenName: prenom,
+    passportNumber: normalizedPassportNumber,
+    nationality: "MAR",
+    birthDate: date_naissance,
+    sex,
+    expiryDate: formattedExpiryDate,
+    personalNumber: cinTrim,
+  });
+  const mrz = mrzResult.mrz;
+  const hmac_hash = authService.generatePassportHmac(normalizedPassportNumber, mrz);
 
   const existsHash = await PassportOffchain.findOne({ hmac_hash }).lean();
   if (existsHash) {
     const err = new Error("PASSPORT_OR_CIN_EXISTS");
     err.status = 409;
+    throw err;
+  }
+
+  const existingNumber = await PassportOffchain.findOne({
+    ...passportNumberQuery(normalizedPassportNumber),
+    is_current: { $ne: false },
+  }).lean();
+  if (existingNumber) {
+    const err = new Error("PASSPORT_NUM_EXISTS");
+    err.status = 409;
+    err.details = "Un passeport actif avec ce numéro existe déjà.";
     throw err;
   }
 
@@ -220,7 +253,7 @@ async function createPassport(payload, agent) {
   }
 
   const dateEmission = Math.floor(Date.now() / 1000);
-  const dateExpiration = toUnixSeconds(date_expiration);
+  const dateExpiration = Math.floor(expirationDate.getTime() / 1000);
   if (dateExpiration <= dateEmission) {
     const err = new Error("DATE_EXPIRATION_INVALIDE");
     err.status = 400;
@@ -282,7 +315,14 @@ async function createPassport(payload, agent) {
     throw err;
   }
 
-  return { hmac_hash, tx_hash_creation: txHash };
+  return {
+    hmac_hash,
+    tx_hash_creation: txHash,
+    mrz,
+    date_expiration: expirationDate.toISOString(),
+    num_passeport: normalizedPassportNumber,
+    cin: cinTrim,
+  };
 }
 
 async function verifyPassport(num_passeport, mrz) {
@@ -293,7 +333,8 @@ async function verifyPassport(num_passeport, mrz) {
       http: 400,
     };
   }
-  const hmac_hash = authService.generatePassportHmac(num_passeport, mrz);
+  const normalizedNum = normalizePassportNumber(num_passeport);
+  const hmac_hash = authService.generatePassportHmac(normalizedNum, mrz);
 
   const bc = await blockchainService.safeCall(() => blockchainService.getPassportOnChain(hmac_hash));
   if (!bc.ok) {
@@ -395,12 +436,28 @@ async function verifyPassport(num_passeport, mrz) {
 }
 
 async function getPassportByCredentials(num_passeport, mrz) {
-  if (!num_passeport || !mrz) {
+  if (!num_passeport) {
     const err = new Error("CHAMPS_REQUIS");
     err.status = 400;
     throw err;
   }
-  const hmac_hash = authService.generatePassportHmac(num_passeport, mrz);
+
+  const normalizedNum = normalizePassportNumber(num_passeport);
+  const trimmedMrz = mrz ? String(mrz).trim() : "";
+  let hmac_hash = "";
+
+  if (trimmedMrz) {
+    hmac_hash = authService.generatePassportHmac(normalizedNum, trimmedMrz);
+  } else {
+    const off = await PassportOffchain.findOne({ ...passportNumberQuery(normalizedNum), is_current: { $ne: false } }).lean();
+    if (!off) {
+      const err = new Error("NOT_FOUND_OFFCHAIN");
+      err.status = 404;
+      throw err;
+    }
+    hmac_hash = off.hmac_hash;
+  }
+
   return getByHashForAgent(hmac_hash);
 }
 
@@ -496,35 +553,33 @@ async function getByHashForAgent(hmac_hash) {
 async function renewPassport(payload, agent) {
   const {
     num_passeport,
-    mrz,
     nouveau_num_passeport,
-    nouveau_mrz,
-    date_expiration,
     motif,
   } = payload;
-  if (!num_passeport || !mrz || !nouveau_num_passeport || !nouveau_mrz || !date_expiration || !motif) {
+  if (!num_passeport || !nouveau_num_passeport || !motif) {
     const err = new Error("CHAMPS_REQUIS");
     err.status = 400;
     throw err;
   }
 
-  const oldHash = authService.generatePassportHmac(num_passeport, mrz);
-  const newHash = authService.generatePassportHmac(nouveau_num_passeport, nouveau_mrz);
-
-  const off = await PassportOffchain.findOne({ hmac_hash: oldHash });
+  // Find the active passport with the given num_passeport
+  const normalizedPassportNumber = normalizePassportNumber(num_passeport);
+  const off = await PassportOffchain.findOne({ 
+    num_passeport: normalizedPassportNumber,
+    is_current: { $ne: false }
+  });
   if (!off) {
     const err = new Error("NOT_FOUND");
     err.status = 404;
     throw err;
   }
-  if (!isOffchainCurrent(off)) {
-    const err = new Error("PASSEPORT_NON_ACTIF_OFFCHAIN");
-    err.status = 409;
-    err.details = off.superseded_by
-      ? `Ce passeport n'est plus la version courante. Utilisez le hash actif: ${off.superseded_by}`
-      : "Ce passeport n'est plus la version courante.";
-    throw err;
-  }
+
+  // Generate new MRZ for the renewed passport by preserving existing personal data and updating the passport number only
+  const normalizedNewPassportNumber = normalizePassportNumber(nouveau_num_passeport);
+  const renewalMrzPayload = authService.generateRenewalMRZ(off.mrz, normalizedNewPassportNumber);
+  const newMrz = renewalMrzPayload?.mrz || authService.generateRandomMRZ();
+  const oldHash = off.hmac_hash;
+  const newHash = authService.generatePassportHmac(normalizedNewPassportNumber, newMrz);
 
   // FIX 1: CHECK FOR PENDING/CONFIRMED REVOCATION
   // User cannot renew a passport that has an active revocation request
@@ -549,6 +604,17 @@ async function renewPassport(payload, agent) {
     throw err;
   }
 
+  const existingActiveNewNumber = await PassportOffchain.findOne({
+    ...passportNumberQuery(normalizedNewPassportNumber),
+    is_current: { $ne: false },
+  });
+  if (existingActiveNewNumber) {
+    const err = new Error("PASSPORT_NUM_EXISTS");
+    err.status = 409;
+    err.details = "Ce nouveau numéro de passeport est déjà utilisé par un passeport actif.";
+    throw err;
+  }
+
   const existsNew = await PassportOffchain.findOne({ hmac_hash: newHash });
   if (existsNew) {
     const err = new Error("NEW_HASH_EXISTS");
@@ -557,12 +623,7 @@ async function renewPassport(payload, agent) {
   }
 
   const newDateEmission = Math.floor(Date.now() / 1000);
-  const newDateExpiration = toUnixSeconds(date_expiration);
-  if (newDateExpiration <= newDateEmission) {
-    const err = new Error("DATE_EXPIRATION_INVALIDE");
-    err.status = 400;
-    throw err;
-  }
+  const newDateExpiration = newDateEmission + (5 * 365 * 24 * 60 * 60); // 5 years from now
 
   const preRenew = await blockchainService.safeCall(() => blockchainService.getPassportOnChain(oldHash));
   if (preRenew.ok) {
@@ -597,7 +658,7 @@ async function renewPassport(payload, agent) {
       const err = new Error("PASSEPORT_DEJA_RENOUVELE");
       err.status = 409;
       err.details =
-        "Ce passeport a deja ete renouvelle on-chain. Utilisez le couple numero/MRZ du passeport actif.";
+        "Ce passeport a deja ete renouvelle on-chain. Utilisez le passeport actif le plus recent.";
       throw err;
     }
   }
@@ -667,8 +728,8 @@ async function renewPassport(payload, agent) {
             hmac_hash: newHash,
             nom: off.nom,
             prenom: off.prenom,
-            num_passeport: String(nouveau_num_passeport).trim(),
-            mrz: String(nouveau_mrz).trim(),
+            num_passeport: normalizedNewPassportNumber,
+            mrz: newMrz,
             date_naissance: off.date_naissance,
             lieu_naissance: off.lieu_naissance,
             cin: off.cin,
@@ -703,17 +764,51 @@ async function renewPassport(payload, agent) {
     nouveau_hmac_hash: newHash,
     tx_hash: txHash,
     nouveau_num_passeport: String(nouveau_num_passeport).trim(),
-    nouveau_mrz: String(nouveau_mrz).trim(),
+    nouveau_mrz: String(newMrz).trim(),
   };
 }
 
-async function setTravelBan(hmac_hash, interdiction, _admin) {
-  const off = await PassportOffchain.findOne({ hmac_hash });
-  if (!off) {
-    const err = new Error("NOT_FOUND");
-    err.status = 404;
+async function setTravelBan({ hmac_hash, num_passeport, mrz, interdiction }, _admin) {
+  if (!hmac_hash && !num_passeport) {
+    const err = new Error("CHAMPS_REQUIS");
+    err.status = 400;
     throw err;
   }
+  if (interdiction == null) {
+    const err = new Error("CHAMPS_REQUIS");
+    err.status = 400;
+    throw err;
+  }
+
+  let off = null;
+  if (hmac_hash) {
+    off = await PassportOffchain.findOne({ hmac_hash }).lean();
+    if (!off) {
+      const err = new Error("NOT_FOUND");
+      err.status = 404;
+      throw err;
+    }
+  } else {
+    const normalizedNum = normalizePassportNumber(num_passeport);
+    off = await PassportOffchain.findOne({ ...passportNumberQuery(normalizedNum), is_current: { $ne: false } }).lean();
+    if (!off) {
+      const err = new Error("NOT_FOUND_OFFCHAIN");
+      err.status = 404;
+      throw err;
+    }
+    if (mrz) {
+      const normalizedMrz = String(mrz).trim();
+      const expectedHash = authService.generatePassportHmac(normalizedNum, normalizedMrz);
+      if (expectedHash !== off.hmac_hash) {
+        const err = new Error("MRZ_MISMATCH");
+        err.status = 400;
+        err.details = "Le MRZ fourni ne correspond pas au passeport actif.";
+        throw err;
+      }
+    }
+    hmac_hash = off.hmac_hash;
+  }
+
   if (!isOffchainCurrent(off)) {
     const err = new Error("PASSEPORT_NON_ACTIF_OFFCHAIN");
     err.status = 409;

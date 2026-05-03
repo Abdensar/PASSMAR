@@ -98,10 +98,11 @@ router.get("/audit", authenticate, requireRoles("ADMIN"), adminLimiter, async (r
         id_agent: req.query.id_agent,
         action: req.query.action,
         resultat: req.query.resultat,
+        agent_name: req.query.agent_name,
         from: req.query.from,
         to: req.query.to,
       },
-      { limit: Number(req.query.limit || 200), skip: Number(req.query.skip || 0) }
+      { limit: Number(req.query.limit || 200), skip: Number(req.query.skip || 0), populate: "id_agent" }
     );
     await auditService.log({
       id_agent: req.agent._id,

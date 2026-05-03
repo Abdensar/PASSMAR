@@ -14,9 +14,21 @@ const RAISON_LABEL = {
 
 async function initiateRevoke({ hmac_hash, num_passeport, mrz, raison }, agent) {
   let targetHash = hmac_hash ? String(hmac_hash).trim() : "";
-  const num = num_passeport ? String(num_passeport).trim() : "";
-  const mrzVal = mrz ? String(mrz).trim() : "";
-  if (!targetHash && num && mrzVal) {
+  const num = num_passeport ? String(num_passeport).trim().toUpperCase() : "";
+  let mrzVal = mrz ? String(mrz).trim() : "";
+  if (!targetHash && num) {
+    if (!mrzVal) {
+      const off = await PassportOffchain.findOne({
+        num_passeport: { $regex: `^${String(num).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" },
+        is_current: { $ne: false },
+      }).lean();
+      if (!off) {
+        const err = new Error("NOT_FOUND_OFFCHAIN");
+        err.status = 404;
+        throw err;
+      }
+      mrzVal = off.mrz;
+    }
     targetHash = authService.generatePassportHmac(num, mrzVal);
   }
   if (!targetHash || !raison) {
@@ -78,20 +90,53 @@ async function initiateRevoke({ hmac_hash, num_passeport, mrz, raison }, agent) 
   return { id_demande: doc._id, statut: doc.statut, hmac_hash: targetHash };
 }
 
+async function enrichRevocations(items) {
+  const hashes = [...new Set(items.map((item) => item.hmac_hash || ""))].filter(Boolean);
+  const initiatorIds = [...new Set(items.map((item) => item.id_agent_initiator || ""))].filter(Boolean);
+  if (!hashes.length && !initiatorIds.length) return items;
+
+  const [passports, agents] = await Promise.all([
+    PassportOffchain.find({ hmac_hash: { $in: hashes } })
+      .select("hmac_hash num_passeport nom prenom cin")
+      .lean(),
+    require("../models/Agent")
+      .find({ _id: { $in: initiatorIds } })
+      .select("_id identifiant role")
+      .lean(),
+  ]);
+
+  const passportMap = passports.reduce((acc, passport) => {
+    acc[passport.hmac_hash] = passport;
+    return acc;
+  }, {});
+  const agentMap = agents.reduce((acc, agent) => {
+    acc[agent._id] = agent;
+    return acc;
+  }, {});
+
+  return items.map((item) => ({
+    ...item,
+    passport: passportMap[item.hmac_hash] || null,
+    initiator: agentMap[item.id_agent_initiator] || null,
+  }));
+}
+
 async function listPending() {
-  return RevocationRequest.find({ statut: "EN_ATTENTE" })
+  const items = await RevocationRequest.find({ statut: "EN_ATTENTE" })
     .sort({ date_demande: -1 })
     .lean();
+  return enrichRevocations(items);
 }
 
 async function listConfirmedNeedsReplacement() {
-  return RevocationRequest.find({
+  const items = await RevocationRequest.find({
     statut: "CONFIRME",
     raison: { $in: ["FALSIFIE", "DECES", "JUDICIAIRE"] },
     allow_replacement: false,
   })
     .sort({ date_confirmation: -1 })
     .lean();
+  return enrichRevocations(items);
 }
 
 async function listAll({ limit = 100, skip = 0 } = {}) {
@@ -122,6 +167,13 @@ async function confirmRevoke({ id_demande }, admin) {
     const err = new Error("STATUT_INVALIDE");
     err.status = 409;
     throw err;
+  }
+
+  // Check if this is a fast-path reason (auto-approve)
+  const autoApprovReasons = ["PERDU", "VOLE", "MODIFICATION_INFO"];
+  if (autoApprovReasons.includes(reqDoc.raison)) {
+    // For fast-path reasons, allow immediate replacement
+    reqDoc.allow_replacement = true;
   }
 
   const raisonStr = RAISON_LABEL[reqDoc.raison] || reqDoc.raison;

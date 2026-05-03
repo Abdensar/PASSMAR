@@ -5,7 +5,7 @@ const passportOffchainSchema = new mongoose.Schema(
     hmac_hash: { type: String, required: true, unique: true },
     nom: { type: String, required: true },
     prenom: { type: String, required: true },
-    num_passeport: { type: String, required: true },
+    num_passeport: { type: String, required: true, trim: true, uppercase: true },
     mrz: { type: String, required: true },
     date_naissance: { type: Date, required: true },
     lieu_naissance: { type: String, required: true },
@@ -26,6 +26,11 @@ const passportOffchainSchema = new mongoose.Schema(
     supersedes: { type: String, default: null },
   },
   { collection: "passeport_offchain" }
+);
+
+passportOffchainSchema.index(
+  { num_passeport: 1 },
+  { unique: true, partialFilterExpression: { is_current: true } }
 );
 
 module.exports = mongoose.model("PassportOffchain", passportOffchainSchema);

@@ -8,7 +8,6 @@ import toast from 'react-hot-toast';
 export default function TravelLog() {
   const [body, setBody] = useState({
     num_passeport: "",
-    mrz: "",
     type_mvt: "ENT",
     checkpoint: "",
     destination: "",
@@ -17,7 +16,6 @@ export default function TravelLog() {
     details: "",
   });
   const [historyNum, setHistoryNum] = useState("");
-  const [historyMrz, setHistoryMrz] = useState("");
   const [travelHistory, setTravelHistory] = useState(null);
   const [successResult, setSuccessResult] = useState(null);
   const [result, setResult] = useState(null);
@@ -40,7 +38,6 @@ export default function TravelLog() {
       // Reset form
       setBody({
         num_passeport: "",
-        mrz: "",
         type_mvt: "ENT",
         checkpoint: "",
         destination: "",
@@ -62,9 +59,9 @@ export default function TravelLog() {
     setTravelHistory(null);
     setLoading(true);
     try {
-      // Get HMAC hash from num_passeport and mrz using query params
-      const q = new URLSearchParams({ num: historyNum, mrz: historyMrz }).toString();
-      const passportData = await api.get(`/passport/lookup?${q}`);
+      const params = new URLSearchParams();
+      params.append("num", historyNum);
+      const passportData = await api.get(`/passport/lookup?${params.toString()}`);
       const hmacHash = passportData.offchain?.hmac_hash || passportData.hmac_hash;
       
       if (!hmacHash) {
@@ -126,19 +123,6 @@ export default function TravelLog() {
               </div>
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-text-light dark:text-text mb-2">
-                MRZ (Ligne de lecture) *
-              </label>
-              <input
-                type="text"
-                value={body.mrz}
-                onChange={(e) => setField("mrz", e.target.value)}
-                className="w-full px-3 py-2 bg-background-light dark:bg-background border border-gray-300 dark:border-gray-600 rounded-lg font-mono text-sm text-text-light dark:text-text placeholder-muted-light dark:placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary-light dark:focus:ring-primary focus:border-transparent"
-                placeholder="Scanné du document"
-                required
-              />
-            </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
@@ -233,7 +217,7 @@ export default function TravelLog() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {/* Movement Type */}
                   <div className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-green-200 dark:border-green-700">
-                    <p className="text-xs text-muted-light dark:text-muted uppercase font-bold tracking-wide mb-1">Type de Mouvement</p>
+                    <p className="text-xs text-muted-light dark:text-muted uppercase font-bold tracking-wide mb-2">Type de Mouvement</p>
                     <p className="text-lg font-bold text-text-light dark:text-text">
                       {successResult.type_mvt === "ENT" ? "📥 Entrée" : "📤 Sortie"}
                     </p>
@@ -241,18 +225,18 @@ export default function TravelLog() {
 
                   {/* Checkpoint */}
                   <div className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-green-200 dark:border-green-700">
-                    <p className="text-xs text-muted-light dark:text-muted uppercase font-bold tracking-wide mb-1">Poste Frontière</p>
-                    <p className="text-lg font-bold text-text-light dark:text-text">
+                    <p className="text-xs text-muted-light dark:text-muted uppercase font-bold tracking-wide mb-2">Poste Frontière</p>
+                    <p className="text-lg font-bold text-text-light dark:text-text break-words">
                       {successResult.checkpoint}
                     </p>
                   </div>
 
                   {/* Origin/Destination */}
                   <div className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-green-200 dark:border-green-700">
-                    <p className="text-xs text-muted-light dark:text-muted uppercase font-bold tracking-wide mb-1">
+                    <p className="text-xs text-muted-light dark:text-muted uppercase font-bold tracking-wide mb-2">
                       {successResult.type_mvt === "ENT" ? "Provenance" : "Destination"}
                     </p>
-                    <p className="text-lg font-bold text-text-light dark:text-text">
+                    <p className="text-lg font-bold text-text-light dark:text-text break-words">
                       {successResult.type_mvt === "ENT" 
                         ? successResult.provenance || "—" 
                         : successResult.destination || "—"}
@@ -261,7 +245,7 @@ export default function TravelLog() {
 
                   {/* Date */}
                   <div className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-green-200 dark:border-green-700">
-                    <p className="text-xs text-muted-light dark:text-muted uppercase font-bold tracking-wide mb-1">Date d'Enregistrement</p>
+                    <p className="text-xs text-muted-light dark:text-muted uppercase font-bold tracking-wide mb-2">Date d'Enregistrement</p>
                     <p className="text-lg font-bold text-text-light dark:text-text">
                       {new Date().toLocaleDateString("fr-FR")}
                     </p>
@@ -309,19 +293,6 @@ export default function TravelLog() {
                   onChange={(e) => setHistoryNum(e.target.value)}
                   className="w-full px-3 py-2 bg-background-light dark:bg-background border border-gray-300 dark:border-gray-600 rounded-lg text-text-light dark:text-text placeholder-muted-light dark:placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary"
                   placeholder="Ex. MA0012345678"
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-text-light dark:text-text mb-2">
-                  MRZ (Ligne de lecture) *
-                </label>
-                <input
-                  type="text"
-                  value={historyMrz}
-                  onChange={(e) => setHistoryMrz(e.target.value)}
-                  className="w-full px-3 py-2 bg-background-light dark:bg-background border border-gray-300 dark:border-gray-600 rounded-lg font-mono text-sm text-text-light dark:text-text placeholder-muted-light dark:placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary"
-                  placeholder="Scanné du document"
                   required
                 />
               </div>

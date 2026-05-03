@@ -15,13 +15,10 @@ export default function DashboardDouane({ agent, onLogout }) {
   const [currentPage, setCurrentPage] = useState("create");
   const [renew, setRenew] = useState({
     num_passeport: "",
-    mrz: "",
     nouveau_num_passeport: "",
-    nouveau_mrz: "",
-    date_expiration: "",
     motif: "EXPIRATION",
   });
-  const [revoke, setRevoke] = useState({ num_passeport: "", mrz: "", raison: "VOLE" });
+  const [revoke, setRevoke] = useState({ num_passeport: "", raison: "VOLE" });
   const [foreign, setForeign] = useState({
     nationalite: "",
     num_passeport_etr: "",
@@ -31,7 +28,6 @@ export default function DashboardDouane({ agent, onLogout }) {
     details: "",
   });
   const [consultNum, setConsultNum] = useState("");
-  const [consultMrz, setConsultMrz] = useState("");
   const [lookupRes, setLookupRes] = useState(null);
   const [cinHistory, setCinHistory] = useState(null);
   const [travelHistory, setTravelHistory] = useState(null);
@@ -50,8 +46,9 @@ export default function DashboardDouane({ agent, onLogout }) {
     setLoading(true);
     try {
       const payload = {
-        ...renew,
-        date_expiration: renew.date_expiration ? new Date(renew.date_expiration).toISOString() : "",
+        num_passeport: renew.num_passeport,
+        nouveau_num_passeport: renew.nouveau_num_passeport,
+        motif: renew.motif,
       };
       const out = await api.post("/passport/renew", payload);
       setResult({ code: 200, message: "Passeport renouvelé avec succès", data: out });
@@ -71,7 +68,6 @@ export default function DashboardDouane({ agent, onLogout }) {
     try {
       const payload = {
         num_passeport: String(revoke.num_passeport || "").trim(),
-        mrz: String(revoke.mrz || "").trim(),
         raison: revoke.raison,
       };
       const out = await api.post("/passport/revoke/initiate", payload);
@@ -129,13 +125,12 @@ export default function DashboardDouane({ agent, onLogout }) {
 
   async function loadPassport(e) {
     e.preventDefault();
-    await loadConsultByCredentials(consultNum, consultMrz);
+    await loadConsultByCredentials(consultNum);
   }
 
   const onSelectPassportVersionConsult = useCallback(
     async ({ num_passeport, mrz: mrzVal }) => {
       setConsultNum(String(num_passeport ?? ""));
-      setConsultMrz(String(mrzVal ?? ""));
       await loadConsultByCredentials(num_passeport, mrzVal, { silentToast: true });
       toast.success("Fiche de la version sélectionnée");
     },
@@ -160,9 +155,10 @@ export default function DashboardDouane({ agent, onLogout }) {
     setTravelHistory(null);
     setLoading(true);
     try {
-      // Get HMAC hash from num_passeport and mrz using query params
-      const q = new URLSearchParams({ num: numPasseport, mrz }).toString();
-      const passportData = await api.get(`/passport/lookup?${q}`);
+      const params = new URLSearchParams();
+      params.append("num", numPasseport);
+      if (mrz) params.append("mrz", mrz);
+      const passportData = await api.get(`/passport/lookup?${params.toString()}`);
       const hmacHash = passportData.offchain?.hmac_hash || passportData.hmac_hash;
       
       if (!hmacHash) {
@@ -195,80 +191,44 @@ export default function DashboardDouane({ agent, onLogout }) {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-text-light dark:text-text mb-2">
-                      Ancien n° passeport
+                      N° Passeport Actuel
                     </label>
                     <input
                       type="text"
                       value={renew.num_passeport}
                       onChange={(e) => setRenew({ ...renew, num_passeport: e.target.value })}
                       className="w-full px-3 py-2 bg-background-light dark:bg-background border border-gray-300 dark:border-gray-600 rounded-lg text-text-light dark:text-text placeholder-muted-light dark:placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary-light dark:focus:ring-primary"
+                      placeholder="Comme sur le document"
                       required
                     />
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-text-light dark:text-text mb-2">
-                      Nouveau n° passeport
+                      Nouveau N° Passeport
                     </label>
                     <input
                       type="text"
                       value={renew.nouveau_num_passeport}
                       onChange={(e) => setRenew({ ...renew, nouveau_num_passeport: e.target.value })}
-                      className="w-full px-3 py-2 bg-background-light dark:bg-background border border-gray-300 dark:border-gray-600 rounded-lg text-text-light dark:text-text placeholder-muted-light dark:placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary"
+                      className="w-full px-3 py-2 bg-background-light dark:bg-background border border-gray-300 dark:border-gray-600 rounded-lg text-text-light dark:text-text placeholder-muted-light dark:placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary-light dark:focus:ring-primary"
+                      placeholder="Nouveau numéro"
                       required
                     />
                   </div>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-text-light dark:text-text mb-2">
-                    Ancien MRZ
+                    Motif du Renouvellement
                   </label>
-                  <input
-                    type="text"
-                    value={renew.mrz}
-                    onChange={(e) => setRenew({ ...renew, mrz: e.target.value })}
-                    className="w-full px-3 py-2 bg-background-light dark:bg-background border border-gray-300 dark:border-gray-600 rounded-lg text-text-light dark:text-text placeholder-muted-light dark:placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary"
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-text-light dark:text-text mb-2">
-                    Nouveau MRZ
-                  </label>
-                  <input
-                    type="text"
-                    value={renew.nouveau_mrz}
-                    onChange={(e) => setRenew({ ...renew, nouveau_mrz: e.target.value })}
-                    className="w-full px-3 py-2 bg-background-light dark:bg-background border border-gray-300 dark:border-gray-600 rounded-lg text-text-light dark:text-text placeholder-muted-light dark:placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary"
-                    required
-                  />
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-text-light dark:text-text mb-2">
-                      Nouvelle expiration
-                    </label>
-                    <input
-                      type="date"
-                      value={renew.date_expiration}
-                      onChange={(e) => setRenew({ ...renew, date_expiration: e.target.value })}
-                      className="w-full px-3 py-2 bg-background-light dark:bg-background border border-gray-300 dark:border-gray-600 rounded-lg text-text-light dark:text-text focus:outline-none focus:ring-2 focus:ring-primary"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-text-light dark:text-text mb-2">
-                      Motif
-                    </label>
-                    <select
-                      value={renew.motif}
-                      onChange={(e) => setRenew({ ...renew, motif: e.target.value })}
-                      className="w-full px-3 py-2 bg-background-light dark:bg-background border border-gray-300 dark:border-gray-600 rounded-lg text-text-light dark:text-text focus:outline-none focus:ring-2 focus:ring-primary"
-                    >
-                      <option value="EXPIRATION">EXPIRATION</option>
-                      <option value="PERTE">PERTE</option>
-                      <option value="DETERIORATION">DETERIORATION</option>
-                    </select>
-                  </div>
+                  <select
+                    value={renew.motif}
+                    onChange={(e) => setRenew({ ...renew, motif: e.target.value })}
+                    className="w-full px-3 py-2 bg-background-light dark:bg-background border border-gray-300 dark:border-gray-600 rounded-lg text-text-light dark:text-text focus:outline-none focus:ring-2 focus:ring-primary-light dark:focus:ring-primary"
+                  >
+                    <option value="EXPIRATION">EXPIRATION</option>
+                    <option value="PERTE">PERTE</option>
+                    <option value="DETERIORATION">DETERIORATION</option>
+                  </select>
                 </div>
                 <button
                   type="submit"
@@ -286,13 +246,69 @@ export default function DashboardDouane({ agent, onLogout }) {
                 </button>
               </form>
             </div>
-            {result && <AlertResult {...result} />}
-            {result?.data?.nouveau_hmac_hash && (
-              <div className="mt-4 space-y-2">
-                <HashDisplay hash={result.data.nouveau_hmac_hash} label="Nouveau hash (passeport actif)" />
-                {result.data.tx_hash && <HashDisplay hash={result.data.tx_hash} label="Transaction renouvellement" />}
+            {result && result.code === 200 && result.data && (
+              <div className="mt-6 bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/30 dark:to-indigo-900/30 border-2 border-blue-300 dark:border-blue-700 rounded-xl p-6 shadow-lg">
+                <div className="flex items-start gap-4">
+                  <div className="text-4xl">🔄</div>
+                  <div className="flex-1">
+                    <h3 className="text-xl font-bold text-blue-800 dark:text-blue-300 mb-4">
+                      Passeport Renouvelé avec Succès
+                    </h3>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {/* New Passport Number */}
+                      <div className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-blue-200 dark:border-blue-700">
+                        <p className="text-xs text-muted-light dark:text-muted uppercase font-bold tracking-wide mb-1">Nouveau N° Passeport</p>
+                        <p className="text-lg font-bold text-text-light dark:text-text">{renew.nouveau_num_passeport}</p>
+                      </div>
+
+                      {/* Expiration Date */}
+                      <div className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-blue-200 dark:border-blue-700">
+                        <p className="text-xs text-muted-light dark:text-muted uppercase font-bold tracking-wide mb-1">Nouvelle Date d'Expiration</p>
+                        <p className="text-lg font-bold text-text-light dark:text-text">
+                          {new Date(Date.now() + 5 * 365 * 24 * 60 * 60 * 1000).toLocaleDateString("fr-FR")}
+                        </p>
+                      </div>
+
+                      {/* Motif */}
+                      <div className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-blue-200 dark:border-blue-700">
+                        <p className="text-xs text-muted-light dark:text-muted uppercase font-bold tracking-wide mb-1">Motif du Renouvellement</p>
+                        <p className="text-lg font-bold text-text-light dark:text-text">{renew.motif}</p>
+                      </div>
+
+                      {/* Date of Renewal */}
+                      <div className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-blue-200 dark:border-blue-700">
+                        <p className="text-xs text-muted-light dark:text-muted uppercase font-bold tracking-wide mb-1">Date du Renouvellement</p>
+                        <p className="text-lg font-bold text-text-light dark:text-text">
+                          {new Date().toLocaleDateString("fr-FR")}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Blockchain Proof */}
+                    {result.data.tx_hash && (
+                      <div className="mt-4 bg-white dark:bg-gray-800 rounded-lg p-4 border-2 border-blue-300 dark:border-blue-600">
+                        <p className="text-xs text-muted-light dark:text-muted uppercase font-bold tracking-wide mb-3">
+                          ⛓️ Preuve Blockchain
+                        </p>
+                        <HashDisplay hash={result.data.tx_hash} label="Transaction de renouvellement" />
+                      </div>
+                    )}
+
+                    {/* New Passport Hash */}
+                    {result.data.nouveau_hmac_hash && (
+                      <div className="mt-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg p-3 border border-blue-200 dark:border-blue-700">
+                        <p className="text-xs text-muted-light dark:text-muted font-mono mb-2">Hash HMAC du Nouveau Passeport</p>
+                        <p className="text-xs font-mono text-text-light dark:text-text break-all">
+                          {result.data.nouveau_hmac_hash}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
             )}
+            {result && result.code !== 200 && <AlertResult {...result} />}
           </div>
         );
       case "revoke":
@@ -318,19 +334,6 @@ export default function DashboardDouane({ agent, onLogout }) {
                     onChange={(e) => setRevoke({ ...revoke, num_passeport: e.target.value })}
                     className="w-full px-3 py-2 bg-background-light dark:bg-background border border-gray-300 dark:border-gray-600 rounded-lg text-text-light dark:text-text placeholder-muted-light dark:placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary"
                     placeholder="Comme sur le document"
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-text-light dark:text-text mb-2">
-                    MRZ
-                  </label>
-                  <input
-                    type="text"
-                    value={revoke.mrz}
-                    onChange={(e) => setRevoke({ ...revoke, mrz: e.target.value })}
-                    className="w-full px-3 py-2 bg-background-light dark:bg-background border border-gray-300 dark:border-gray-600 rounded-lg font-mono text-sm text-text-light dark:text-text placeholder-muted-light dark:placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary"
-                    placeholder="Ligne MRZ du document"
                     required
                   />
                 </div>
@@ -477,7 +480,7 @@ export default function DashboardDouane({ agent, onLogout }) {
           <div className="max-w-4xl">
             <h2 className="text-2xl font-bold mb-2 text-text-light dark:text-text">Consulter un passeport</h2>
             <p className="text-sm text-muted-light dark:text-muted mb-6">
-              Saisissez le numéro et le MRZ lus sur le document — pas besoin du hash HMAC.
+              Saisissez le numéro de passeport — pas besoin du hash HMAC.
             </p>
             <div className="bg-surface-light dark:bg-surface-dark border border-gray-200 dark:border-gray-700 rounded-xl p-6">
               <form onSubmit={loadPassport} className="space-y-4">
@@ -492,17 +495,6 @@ export default function DashboardDouane({ agent, onLogout }) {
                     className="w-full px-3 py-2 bg-background-light dark:bg-background border border-gray-300 dark:border-gray-600 rounded-lg text-text-light dark:text-text focus:outline-none focus:ring-2 focus:ring-primary"
                     placeholder="Ex. MA0012345678"
                     autoComplete="off"
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-text-light dark:text-text mb-2">MRZ</label>
-                  <input
-                    type="text"
-                    value={consultMrz}
-                    onChange={(e) => setConsultMrz(e.target.value)}
-                    className="w-full px-3 py-2 bg-background-light dark:bg-background border border-gray-300 dark:border-gray-600 rounded-lg font-mono text-sm text-text-light dark:text-text focus:outline-none focus:ring-2 focus:ring-primary"
-                    placeholder="Ligne MRZ du document"
                     required
                   />
                 </div>

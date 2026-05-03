@@ -1,5 +1,6 @@
 const VoyageOffchain = require("../models/VoyageOffchain");
 const VoyageEtranger = require("../models/VoyageEtranger");
+const PassportOffchain = require("../models/PassportOffchain");
 const authService = require("./authService");
 const blockchainService = require("./blockchainService");
 
@@ -30,7 +31,7 @@ async function assertPassportAllowsTravel(hmac_hash, type_mvt) {
 
 async function addTravel(payload, agent) {
   const { num_passeport, mrz, type_mvt, checkpoint, destination, provenance, details } = payload;
-  if (!num_passeport || !mrz || !type_mvt || !checkpoint) {
+  if (!num_passeport || !type_mvt || !checkpoint) {
     const err = new Error("CHAMPS_REQUIS");
     err.status = 400;
     throw err;
@@ -41,7 +42,22 @@ async function addTravel(payload, agent) {
     throw err;
   }
 
-  const hmac_hash = authService.generatePassportHmac(num_passeport, mrz);
+  const normalizedPassportNumber = String(num_passeport).trim().toUpperCase();
+  let passportMrz = mrz ? String(mrz).trim() : "";
+  if (!passportMrz) {
+    const off = await PassportOffchain.findOne({
+      num_passeport: { $regex: `^${String(normalizedPassportNumber).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" },
+      is_current: { $ne: false },
+    }).lean();
+    if (!off) {
+      const err = new Error("NOT_FOUND_OFFCHAIN");
+      err.status = 404;
+      throw err;
+    }
+    passportMrz = off.mrz;
+  }
+
+  const hmac_hash = authService.generatePassportHmac(normalizedPassportNumber, passportMrz);
   await assertPassportAllowsTravel(hmac_hash, type_mvt);
 
   const ts = Math.floor(Date.now() / 1000);
@@ -78,7 +94,16 @@ async function addTravel(payload, agent) {
     throw err;
   }
 
-  return { tx_hash: txHash, hmac_hash, type_mvt, enregistre: true };
+  return {
+    tx_hash: txHash,
+    hmac_hash,
+    type_mvt,
+    checkpoint,
+    destination: type_mvt === "SOR" ? destination || "" : "",
+    provenance: type_mvt === "ENT" ? provenance || "" : "",
+    details: details || "",
+    enregistre: true,
+  };
 }
 
 async function getTravelHistory(hmac_hash) {

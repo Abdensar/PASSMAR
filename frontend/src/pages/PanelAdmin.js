@@ -3,36 +3,37 @@ import { useNavigate } from "react-router-dom";
 import { api, formatError } from "../services/apiClient";
 import SidebarLayout from "../components/SidebarLayout";
 import AlertResult from "../components/AlertResult";
-import HashDisplay from "../components/HashDisplay";
 import AuditTable from "../components/AuditTable";
 import toast from 'react-hot-toast';
 
 export default function PanelAdmin({ agent, onLogout }) {
   const nav = useNavigate();
-  const [currentPage, setCurrentPage] = useState("agents");
+  const [currentPage, setCurrentPage] = useState("stats");
   const [agents, setAgents] = useState([]);
   const [pending, setPending] = useState([]);
   const [confirmedNeedsReplacement, setConfirmedNeedsReplacement] = useState([]);
   const [stats, setStats] = useState(null);
   const [result, setResult] = useState(null);
+  const [createdAgent, setCreatedAgent] = useState(null);
   const [loading, setLoading] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newAgent, setNewAgent] = useState({
     identifiant: "",
     password: "",
     role: "DOUANE",
-    type_autorite: "DOUANE",
     nom_autorite: "Poste frontière",
   });
-  const [ban, setBan] = useState({ hmac_hash: "", interdiction: true });
+  const [revocationSearch, setRevocationSearch] = useState("");
+  const [ban, setBan] = useState({ num_passeport: "", interdiction: true });
   const [confirmId, setConfirmId] = useState("");
   const [reject, setReject] = useState({ id_demande: "", notes: "" });
 
   const navigationItems = [
+    { key: 'stats', icon: '📈', label: 'Statistiques' },
     { key: 'agents', icon: '👥', label: 'Agents' },
     { key: 'revocations', icon: '⚖️', label: 'Révocations' },
+    { key: 'travelban', icon: '🚫', label: 'Interdiction' },
     { key: 'audit', icon: '📊', label: 'Audit Log' },
-    { key: 'stats', icon: '📈', label: 'Statistiques' },
   ];
 
   async function doLogout() {
@@ -61,25 +62,54 @@ export default function PanelAdmin({ agent, onLogout }) {
     }
   }
 
+  async function refreshStats() {
+    try {
+      const s = await api.get("/admin/stats");
+      setStats(s);
+    } catch (ex) {
+      toast.error(formatError(ex));
+    }
+  }
+
   useEffect(() => {
-    refreshLists();
+    if (currentPage === "stats") {
+      refreshStats();
+    } else {
+      refreshLists();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (currentPage === "stats") {
+      refreshStats();
+    }
+    if (currentPage === "agents" || currentPage === "revocations") {
+      refreshLists();
+    }
+    const interval = setInterval(() => {
+      if (currentPage === "agents" || currentPage === "revocations") {
+        refreshLists();
+      }
+    }, 12000);
+    return () => clearInterval(interval);
+  }, [currentPage]);
 
   async function createAgent(e) {
     e.preventDefault();
     setResult(null);
+    setCreatedAgent(null);
     setLoading(true);
     try {
-      const out = await api.post("/admin/agents", newAgent);
-      setResult({ code: 200, message: `Agent créé : ${out.agent?.identifiant}`, data: out });
+      const payload = { ...newAgent, type_autorite: newAgent.role };
+      const out = await api.post("/admin/agents", payload);
+      setCreatedAgent({ ...out.agent, authority_name: newAgent.nom_autorite });
       toast.success("Agent créé avec succès !");
       setShowCreateModal(false);
       setNewAgent({
         identifiant: "",
         password: "",
         role: "DOUANE",
-        type_autorite: "DOUANE",
         nom_autorite: "Poste frontière",
       });
       refreshLists();
@@ -162,8 +192,8 @@ export default function PanelAdmin({ agent, onLogout }) {
     setLoading(true);
     try {
       const out = await api.patch("/passport/travel-ban", ban);
-      setResult({ code: 200, message: "Interdiction appliquée", data: out });
-      toast.success("Interdiction appliquée !");
+      setResult({ code: 200, message: "Interdiction mise à jour", data: out });
+      toast.success("Interdiction mise à jour !");
     } catch (ex) {
       setResult({ code: ex.response?.status || 500, message: formatError(ex) });
       toast.error(formatError(ex));
@@ -177,7 +207,7 @@ export default function PanelAdmin({ agent, onLogout }) {
       case "agents":
         return (
           <div className="max-w-6xl">
-            <div className="flex justify-between items-center mb-6">
+            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between mb-6">
               <h2 className="text-2xl font-bold text-white">Gestion des Agents</h2>
               <button
                 onClick={() => setShowCreateModal(true)}
@@ -186,6 +216,26 @@ export default function PanelAdmin({ agent, onLogout }) {
                 Créer Agent
               </button>
             </div>
+            {createdAgent && (
+              <div className="mb-6 rounded-2xl border border-valid-light/40 bg-valid-light/10 p-6 text-valid-light dark:border-valid/40 dark:bg-valid/10">
+                <h3 className="text-xl font-semibold mb-2">Nouveau agent créé</h3>
+                <p className="text-sm text-white mb-4">{createdAgent.identifiant} a été ajouté avec succès.</p>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                  <div className="rounded-xl bg-white/10 p-4">
+                    <span className="block text-xs uppercase text-gray-400">Rôle</span>
+                    <p className="font-semibold">{createdAgent.role}</p>
+                  </div>
+                  <div className="rounded-xl bg-white/10 p-4">
+                    <span className="block text-xs uppercase text-gray-400">Autorité</span>
+                    <p className="font-semibold">{createdAgent.authority_name || createdAgent.id_autorite?.nom_autorite || newAgent.nom_autorite}</p>
+                  </div>
+                  <div className="rounded-xl bg-white/10 p-4">
+                    <span className="block text-xs uppercase text-gray-400">Adresse ETH</span>
+                    <p className="font-semibold break-all">{createdAgent.eth_address}</p>
+                  </div>
+                </div>
+              </div>
+            )}
             <div className="bg-surface-light dark:bg-surface-dark border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden">
               <table className="w-full">
                 <thead className="bg-[#FAE19E] dark:bg-gray-700">
@@ -244,15 +294,64 @@ export default function PanelAdmin({ agent, onLogout }) {
             
             {/* Pending Revocations */}
             <div className="mb-8">
-              <h3 className="text-xl font-semibold text-white mb-4">Demandes en Attente de Confirmation</h3>
+              <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between mb-4">
+                <div>
+                  <h3 className="text-xl font-semibold text-white">Demandes en Attente de Confirmation</h3>
+                  <p className="text-gray-400">Filtrer par numéro de passeport, raison ou nom d'agent.</p>
+                </div>
+                <input
+                  type="text"
+                  value={revocationSearch}
+                  onChange={(e) => setRevocationSearch(e.target.value)}
+                  placeholder="Recherche de révocation..."
+                  className="w-full md:w-80 px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+              </div>
               <div className="space-y-4">
-                {pending.map((r) => (
-                  <div key={r._id} className="bg-gray-800/50 border border-gray-700 rounded-xl p-6">
-                    <div className="flex justify-between items-start mb-4">
+                {pending
+                  .filter((r) => {
+                    const query = revocationSearch.toLowerCase();
+                    if (!query) return true;
+                    return [
+                      r._id,
+                      r.raison,
+                      r.passport?.num_passeport,
+                      r.passport?.nom,
+                      r.passport?.prenom,
+                      r.initiator?.identifiant,
+                    ]
+                      .filter(Boolean)
+                      .some((value) => String(value).toLowerCase().includes(query));
+                  })
+                  .map((r) => (
+                    <div key={r._id} className="bg-gray-800/50 border border-gray-700 rounded-xl p-6">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:justify-between lg:items-start mb-4">
                       <div>
                         <h4 className="text-lg font-semibold text-white mb-2">Demande #{r._id}</h4>
                         <p className="text-gray-300 mb-2">Raison: {r.raison}</p>
-                        <HashDisplay hash={r.hmac_hash} label="Hash du Passeport" />
+                        {r.initiator ? (
+                          <p className="text-sm text-gray-400 mb-2">Demandeur: {r.initiator.identifiant} ({r.initiator.role})</p>
+                        ) : null}
+                        {r.passport ? (
+                          <div className="rounded-xl bg-white/5 border border-white/10 p-4 mb-2">
+                            <div className="flex items-center justify-between gap-4 mb-2">
+                              <div>
+                                <p className="text-sm text-gray-300">Passeport</p>
+                                <p className="text-base font-semibold text-white">{r.passport.num_passeport}</p>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => navigator.clipboard.writeText(r.passport.num_passeport)}
+                                className="rounded-lg bg-gray-700 px-3 py-2 text-xs font-semibold text-white hover:bg-gray-600 transition-colors"
+                              >
+                                Copier
+                              </button>
+                            </div>
+                            <p className="text-sm text-gray-400">{r.passport.nom} {r.passport.prenom}</p>
+                          </div>
+                        ) : (
+                          <p className="text-sm text-gray-400 mb-2">Passeport inconnu</p>
+                        )}
                       </div>
                       <div className="flex gap-2">
                         <button
@@ -273,7 +372,20 @@ export default function PanelAdmin({ agent, onLogout }) {
                     </div>
                   </div>
                 ))}
-                {pending.length === 0 && (
+                {pending.filter((r) => {
+                    const query = revocationSearch.toLowerCase();
+                    if (!query) return true;
+                    return [
+                      r._id,
+                      r.raison,
+                      r.passport?.num_passeport,
+                      r.passport?.nom,
+                      r.passport?.prenom,
+                      r.initiator?.identifiant,
+                    ]
+                      .filter(Boolean)
+                      .some((value) => String(value).toLowerCase().includes(query));
+                  }).length === 0 && (
                   <div className="text-center py-8 bg-gray-800/30 rounded-xl">
                     <p className="text-gray-400">Aucune demande de révocation en attente</p>
                   </div>
@@ -285,14 +397,49 @@ export default function PanelAdmin({ agent, onLogout }) {
             <div>
               <h3 className="text-xl font-semibold text-white mb-4">Révocations Confirmées - Approbation de Remplacement Requise</h3>
               <div className="space-y-4">
-                {confirmedNeedsReplacement.map((r) => (
-                  <div key={r._id} className="bg-orange-900/20 border border-orange-700 rounded-xl p-6">
-                    <div className="flex justify-between items-start mb-4">
+                {confirmedNeedsReplacement
+                  .filter((r) => {
+                    const query = revocationSearch.toLowerCase();
+                    if (!query) return true;
+                    return [
+                      r._id,
+                      r.raison,
+                      r.passport?.num_passeport,
+                      r.passport?.nom,
+                      r.passport?.prenom,
+                      r.initiator?.identifiant,
+                    ]
+                      .filter(Boolean)
+                      .some((value) => String(value).toLowerCase().includes(query));
+                  })
+                  .map((r) => (
+                    <div key={r._id} className="bg-orange-900/20 border border-orange-700 rounded-xl p-6">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:justify-between lg:items-start mb-4">
                       <div>
                         <h4 className="text-lg font-semibold text-white mb-2">Révocation Confirmée #{r._id}</h4>
                         <p className="text-gray-300 mb-2">Raison: {r.raison}</p>
+                        {r.initiator ? (
+                          <p className="text-sm text-orange-200 mb-2">Demandeur: {r.initiator.identifiant} ({r.initiator.role})</p>
+                        ) : null}
+                        {r.passport ? (
+                          <div className="rounded-xl bg-white/5 border border-white/10 p-4 mb-2">
+                            <div className="flex items-center justify-between gap-4 mb-2">
+                              <div>
+                                <p className="text-sm text-orange-200">Passeport</p>
+                                <p className="text-base font-semibold text-white">{r.passport.num_passeport}</p>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => navigator.clipboard.writeText(r.passport.num_passeport)}
+                                className="rounded-lg bg-orange-600 px-3 py-2 text-xs font-semibold text-white hover:bg-orange-500 transition-colors"
+                              >
+                                Copier
+                              </button>
+                            </div>
+                            <p className="text-sm text-orange-300">{r.passport.nom} {r.passport.prenom}</p>
+                          </div>
+                        ) : null}
                         <p className="text-sm text-orange-300 mb-2">Confirmée le: {new Date(r.date_confirmation).toLocaleDateString('fr-FR')}</p>
-                        <HashDisplay hash={r.hmac_hash} label="Hash du Passeport Révoqué" />
                       </div>
                       <div className="flex gap-2">
                         <button
@@ -306,7 +453,20 @@ export default function PanelAdmin({ agent, onLogout }) {
                     </div>
                   </div>
                 ))}
-                {confirmedNeedsReplacement.length === 0 && (
+                {confirmedNeedsReplacement.filter((r) => {
+                    const query = revocationSearch.toLowerCase();
+                    if (!query) return true;
+                    return [
+                      r._id,
+                      r.raison,
+                      r.passport?.num_passeport,
+                      r.passport?.nom,
+                      r.passport?.prenom,
+                      r.initiator?.identifiant,
+                    ]
+                      .filter(Boolean)
+                      .some((value) => String(value).toLowerCase().includes(query));
+                  }).length === 0 && (
                   <div className="text-center py-8 bg-gray-800/30 rounded-xl">
                     <p className="text-gray-400">Aucune révocation ne nécessite d'approbation de remplacement</p>
                   </div>
@@ -314,6 +474,56 @@ export default function PanelAdmin({ agent, onLogout }) {
               </div>
             </div>
             
+            {result && <AlertResult {...result} />}
+          </div>
+        );
+      case "travelban":
+        return (
+          <div className="max-w-4xl">
+            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between mb-6">
+              <div>
+                <h2 className="text-2xl font-bold text-white">Interdiction de sortie</h2>
+                <p className="text-gray-400 max-w-2xl">Appliquez ou retirez l'interdiction de sortie pour un passeport actif en utilisant son numéro.</p>
+              </div>
+            </div>
+            <div className="bg-surface-light dark:bg-surface-dark border border-gray-200 dark:border-gray-700 rounded-xl p-6">
+              <form onSubmit={applyBan} className="space-y-6">
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Numéro de passeport</label>
+                  <input
+                    type="text"
+                    value={ban.num_passeport}
+                    onChange={(e) => setBan({ ...ban, num_passeport: e.target.value })}
+                    className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary"
+                    placeholder="Exemple: AB123456"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Action</label>
+                  <select
+                    value={ban.interdiction ? "true" : "false"}
+                    onChange={(e) => setBan({ ...ban, interdiction: e.target.value === "true" })}
+                    className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary"
+                  >
+                    <option value="true">Appliquer l'interdiction</option>
+                    <option value="false">Retirer l'interdiction</option>
+                  </select>
+                </div>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className="bg-primary hover:bg-primary/90 disabled:opacity-50 text-white font-semibold py-2 px-4 rounded-lg transition-colors"
+                  >
+                    {loading ? 'En cours...' : 'Enregistrer'}
+                  </button>
+                  <p className="text-sm text-gray-400">
+                    Cette action mettra à jour le statut d'interdiction sur la blockchain pour le passeport actif associé.
+                  </p>
+                </div>
+              </form>
+            </div>
             {result && <AlertResult {...result} />}
           </div>
         );
@@ -392,7 +602,7 @@ export default function PanelAdmin({ agent, onLogout }) {
                   required
                 />
               </div>
-              <div>
+              <div className="space-y-1">
                 <label className="block text-sm font-medium text-gray-300 mb-2">Rôle</label>
                 <select
                   value={newAgent.role}
@@ -403,18 +613,7 @@ export default function PanelAdmin({ agent, onLogout }) {
                   <option value="POLICE">POLICE</option>
                   <option value="ADMIN">ADMIN</option>
                 </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">Type autorité</label>
-                <select
-                  value={newAgent.type_autorite}
-                  onChange={(e) => setNewAgent({ ...newAgent, type_autorite: e.target.value })}
-                  className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary"
-                >
-                  <option value="DOUANE">DOUANE</option>
-                  <option value="POLICE">POLICE</option>
-                  <option value="ADMIN">ADMIN</option>
-                </select>
+                <p className="text-xs text-gray-400">Le rôle est utilisé pour déterminer automatiquement le type d'autorité.</p>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-300 mb-2">Nom autorité</label>

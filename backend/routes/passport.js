@@ -334,13 +334,15 @@ router.post("/revoke/approve-replacement", authenticate, requireRoles("ADMIN"), 
 router.patch("/travel-ban", authenticate, requireRoles("ADMIN"), defaultWriteLimiter, async (req, res) => {
   const ip = req.ip || "";
   const ua = req.get("user-agent") || "";
+  let target = "";
   try {
-    const { hmac_hash, interdiction } = req.body;
-    const out = await passportService.setTravelBan(hmac_hash, interdiction, req.agent);
+    const { hmac_hash, num_passeport, mrz, interdiction } = req.body;
+    const out = await passportService.setTravelBan({ hmac_hash, num_passeport, mrz, interdiction }, req.agent);
+    target = out.hmac_hash || "";
     await auditService.log({
       id_agent: req.agent._id,
       action: auditService.ACTIONS.SET_TRAVEL_BAN,
-      target_hash: hmac_hash,
+      target_hash: target,
       ip_address: ip,
       user_agent: ua,
       resultat: "SUCCESS",
@@ -350,6 +352,7 @@ router.patch("/travel-ban", authenticate, requireRoles("ADMIN"), defaultWriteLim
     await auditService.log({
       id_agent: req.agent._id,
       action: auditService.ACTIONS.SET_TRAVEL_BAN,
+      target_hash: target,
       ip_address: ip,
       user_agent: ua,
       resultat: "FAILED",
