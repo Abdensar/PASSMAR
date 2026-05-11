@@ -1,8 +1,6 @@
 import { useState } from "react";
 import { api, formatError } from "../services/apiClient";
 import AlertResult from "./AlertResult";
-import HashDisplay from "./HashDisplay";
-import BlockchainProof from "./BlockchainProof";
 import toast from 'react-hot-toast';
 
 export default function PassportForm() {
@@ -252,25 +250,6 @@ export default function PassportForm() {
                 </div>
               </div>
 
-              {/* Blockchain Proof */}
-              {result.data.tx_hash_creation && (
-                <div className="mt-4 bg-white dark:bg-gray-800 rounded-lg p-4 border-2 border-blue-300 dark:border-blue-600">
-                  <p className="text-xs text-muted-light dark:text-muted uppercase font-bold tracking-wide mb-3">
-                    ⛓️ Preuve Blockchain
-                  </p>
-                  <BlockchainProof txHash={result.data.tx_hash_creation} />
-                </div>
-              )}
-
-              {/* Passport Hash */}
-              {result.data.hmac_hash && (
-                <div className="mt-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg p-3 border border-blue-200 dark:border-blue-700">
-                  <p className="text-xs text-muted-light dark:text-muted font-mono mb-2">Hash HMAC du Passeport</p>
-                  <p className="text-xs font-mono text-text-light dark:text-text break-all">
-                    {result.data.hmac_hash}
-                  </p>
-                </div>
-              )}
             </div>
           </div>
         </div>

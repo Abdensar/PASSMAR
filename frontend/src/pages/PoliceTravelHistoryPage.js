@@ -5,22 +5,21 @@ import toast from "react-hot-toast";
 
 export default function PoliceTravelHistoryPage() {
   const [num, setNum] = useState("");
-  const [mrz, setMrz] = useState("");
   const [history, setHistory] = useState(null);
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
 
   async function loadTravelHistory(e) {
     e.preventDefault();
-    if (!num.trim() || !mrz.trim()) {
-      toast.error("Saisissez le numéro et le MRZ");
+    if (!num.trim()) {
+      toast.error("Saisissez le numéro du passeport");
       return;
     }
     setResult(null);
     setHistory(null);
     setLoading(true);
     try {
-      const cred = await api.lookupPassport(num.trim(), mrz.trim());
+      const cred = await api.lookupPassport(num.trim());
       const h = cred?.offchain?.hmac_hash || cred?.hmac_hash;
       if (!h) {
         const err = new Error("Impossible de déterminer le passeport actif");
@@ -47,7 +46,7 @@ export default function PoliceTravelHistoryPage() {
         <h1 className="text-2xl font-bold text-text-light dark:text-text">Historique des voyages</h1>
         <p className="text-sm text-muted-light dark:text-muted max-w-xl">
           Les mouvements affichés sont ceux rattachés au <strong>passeport actif</strong> (dernière version après
-          éventuels renouvellements), à partir du n° et du MRZ saisis.
+          éventuels renouvellements), à partir du n° saisi.
         </p>
       </header>
 
@@ -71,25 +70,10 @@ export default function PoliceTravelHistoryPage() {
               required
             />
           </div>
-          <div>
-            <label className="block text-sm font-medium text-text-light dark:text-text mb-2" htmlFor="hist-mrz">
-              MRZ
-            </label>
-            <input
-              id="hist-mrz"
-              type="text"
-              value={mrz}
-              onChange={(e) => setMrz(e.target.value)}
-              className="w-full px-3 py-2 bg-background-light dark:bg-background border border-gray-300 dark:border-gray-600 rounded-lg font-mono text-sm text-text-light dark:text-text focus:outline-none focus:ring-2 focus:ring-primary"
-              placeholder="Ligne MRZ"
-              autoComplete="off"
-              required
-            />
-          </div>
           <div className="pt-2">
             <button
               type="submit"
-              disabled={loading || !num.trim() || !mrz.trim()}
+              disabled={loading || !num.trim()}
               className="inline-flex justify-center items-center gap-2 px-6 py-3 rounded-lg bg-blockchain hover:bg-blockchain/90 disabled:opacity-50 text-white font-semibold"
             >
               {loading ? (

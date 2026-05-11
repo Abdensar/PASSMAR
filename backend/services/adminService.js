@@ -96,7 +96,7 @@ async function createAgent(payload) {
     });
     const safe = agent.toObject();
     delete safe.pwd_hash;
-    delete safe.totp_secret;
+    if (!totp_enabled) delete safe.totp_secret;
     return { agent: safe, otpauth_url: role === "ADMIN" ? otpauth_url : null };
   } catch (e) {
     if (e.code === 11000) {

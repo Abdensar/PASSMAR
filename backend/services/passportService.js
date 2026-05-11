@@ -169,8 +169,46 @@ async function createPassport(payload, agent) {
   const mrz = mrzResult.mrz;
   const hmac_hash = authService.generatePassportHmac(normalizedPassportNumber, mrz);
 
+  // HYBRID LOGIC FIRST: Check if CIN exists on a REVOKED passport (replacement scenario)
+  let oldHashForSupersedes = null;
+  let pendingRevocationError = null;
+  const cinOffchainList = await PassportOffchain.find({
+    cin: cinTrim,
+    is_current: false,
+  }).lean();
+
+  for (const oldPass of cinOffchainList) {
+    const revocationReq = await RevocationRequest.findOne({
+      hmac_hash: oldPass.hmac_hash,
+      statut: "CONFIRME",
+    }).lean();
+
+    if (!revocationReq) {
+      continue;
+    }
+
+    if (["PERDU", "VOLE", "MODIFICATION_INFO"].includes(revocationReq.raison)) {
+      oldHashForSupersedes = oldPass.hmac_hash;
+      break;
+    }
+
+    if (revocationReq.allow_replacement) {
+      oldHashForSupersedes = oldPass.hmac_hash;
+      break;
+    }
+
+    pendingRevocationError = revocationReq;
+  }
+
+  if (!oldHashForSupersedes && pendingRevocationError) {
+    const err = new Error("REVOCATION_REQUIRES_ADMIN_APPROVAL");
+    err.status = 409;
+    err.details = `Ce passeport a été révoqué pour raison: ${pendingRevocationError.raison}. L'administration doit approuver le remplacement avant création.`;
+    throw err;
+  }
+
   const existsHash = await PassportOffchain.findOne({ hmac_hash }).lean();
-  if (existsHash) {
+  if (existsHash && existsHash.hmac_hash !== oldHashForSupersedes) {
     const err = new Error("PASSPORT_OR_CIN_EXISTS");
     err.status = 409;
     throw err;
@@ -178,52 +216,42 @@ async function createPassport(payload, agent) {
 
   const existingNumber = await PassportOffchain.findOne({
     ...passportNumberQuery(normalizedPassportNumber),
-    is_current: { $ne: false },
   }).lean();
-  if (existingNumber) {
+  if (existingNumber && !(oldHashForSupersedes && existingNumber.hmac_hash === oldHashForSupersedes)) {
     const err = new Error("PASSPORT_NUM_EXISTS");
     err.status = 409;
-    err.details = "Un passeport actif avec ce numéro existe déjà.";
+    err.details = "Ce numéro de passeport a déjà été utilisé pour un autre passeport.";
     throw err;
   }
 
-  // HYBRID LOGIC FIRST: Check if CIN exists on a REVOKED passport (replacement scenario)
-  let oldHashForSupersedes = null;
-  const cinOnRevoked = await PassportOffchain.findOne({
-    cin: cinTrim,
-    is_current: false,
-  }).lean();
-
-  if (cinOnRevoked) {
-    // Get revocation details to check reason
+  for (const oldPass of cinOffchainList) {
     const revocationReq = await RevocationRequest.findOne({
-      hmac_hash: cinOnRevoked.hmac_hash,
+      hmac_hash: oldPass.hmac_hash,
       statut: "CONFIRME",
     }).lean();
 
-    if (revocationReq) {
-      // Fast path: PERDU/VOLE/MODIFICATION_INFO - auto-allow new passport creation
-      if (["PERDU", "VOLE", "MODIFICATION_INFO"].includes(revocationReq.raison)) {
-        oldHashForSupersedes = cinOnRevoked.hmac_hash;
-        // ✅ Allow creation - will link via supersedes chain
-      } else {
-        // Slow path: FALSIFIE/DECES/JUDICIAIRE - require admin approval
-        // Check if admin has approved replacement
-        if (!revocationReq.allow_replacement) {
-          const err = new Error("REVOCATION_REQUIRES_ADMIN_APPROVAL");
-          err.status = 409;
-          err.details = `Ce passeport a été révoqué pour raison: ${revocationReq.raison}. L'administration doit approuver le remplacement avant création.`;
-          throw err;
-        }
-        oldHashForSupersedes = cinOnRevoked.hmac_hash;
-        // ✅ Allow creation - admin has pre-approved
-      }
-    } else {
-      // CIN on non-active passport but no confirmed revocation found
-      const err = new Error("PASSPORT_OR_CIN_EXISTS");
-      err.status = 409;
-      throw err;
+    if (!revocationReq) {
+      continue;
     }
+
+    if (["PERDU", "VOLE", "MODIFICATION_INFO"].includes(revocationReq.raison)) {
+      oldHashForSupersedes = oldPass.hmac_hash;
+      break;
+    }
+
+    if (revocationReq.allow_replacement) {
+      oldHashForSupersedes = oldPass.hmac_hash;
+      break;
+    }
+
+    pendingRevocationError = revocationReq;
+  }
+
+  if (!oldHashForSupersedes && pendingRevocationError) {
+    const err = new Error("REVOCATION_REQUIRES_ADMIN_APPROVAL");
+    err.status = 409;
+    err.details = `Ce passeport a été révoqué pour raison: ${pendingRevocationError.raison}. L'administration doit approuver le remplacement avant création.`;
+    throw err;
   }
 
   // NOW check if CIN is taken by ANOTHER active passport (only if not in revocation replacement scenario)
@@ -449,7 +477,10 @@ async function getPassportByCredentials(num_passeport, mrz) {
   if (trimmedMrz) {
     hmac_hash = authService.generatePassportHmac(normalizedNum, trimmedMrz);
   } else {
-    const off = await PassportOffchain.findOne({ ...passportNumberQuery(normalizedNum), is_current: { $ne: false } }).lean();
+    let off = await PassportOffchain.findOne(passportNumberQuery(normalizedNum)).lean();
+    if (!off) {
+      off = await PassportOffchain.findOne(passportNumberQuery(normalizedNum)).sort({ created_at: -1 }).lean();
+    }
     if (!off) {
       const err = new Error("NOT_FOUND_OFFCHAIN");
       err.status = 404;

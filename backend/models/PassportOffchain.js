@@ -30,7 +30,7 @@ const passportOffchainSchema = new mongoose.Schema(
 
 passportOffchainSchema.index(
   { num_passeport: 1 },
-  { unique: true, partialFilterExpression: { is_current: true } }
+  { unique: true }
 );
 
 module.exports = mongoose.model("PassportOffchain", passportOffchainSchema);

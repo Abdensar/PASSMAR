@@ -98,7 +98,6 @@ router.get("/audit", authenticate, requireRoles("ADMIN"), adminLimiter, async (r
         id_agent: req.query.id_agent,
         action: req.query.action,
         resultat: req.query.resultat,
-        agent_name: req.query.agent_name,
         from: req.query.from,
         to: req.query.to,
       },

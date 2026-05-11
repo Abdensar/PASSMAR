@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { api, formatError } from "../services/apiClient";
 import AlertResult from "./AlertResult";
-import BlockchainProof from "./BlockchainProof";
 import StatusBadge from "./StatusBadge";
 import toast from 'react-hot-toast';
 
@@ -252,25 +251,6 @@ export default function TravelLog() {
                   </div>
                 </div>
 
-                {/* Blockchain Proof */}
-                {successResult.tx_hash && (
-                  <div className="mt-4 bg-white dark:bg-gray-800 rounded-lg p-4 border-2 border-blue-300 dark:border-blue-600">
-                    <p className="text-xs text-muted-light dark:text-muted uppercase font-bold tracking-wide mb-3">
-                      ⛓️ Preuve Blockchain
-                    </p>
-                    <BlockchainProof txHash={successResult.tx_hash} />
-                  </div>
-                )}
-
-                {/* Passport Hash */}
-                {successResult.hmac_hash && (
-                  <div className="mt-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg p-3 border border-blue-200 dark:border-blue-700">
-                    <p className="text-xs text-muted-light dark:text-muted font-mono mb-2">Hash HMAC du Passeport</p>
-                    <p className="text-xs font-mono text-text-light dark:text-text break-all">
-                      {successResult.hmac_hash}
-                    </p>
-                  </div>
-                )}
               </div>
             </div>
           </div>

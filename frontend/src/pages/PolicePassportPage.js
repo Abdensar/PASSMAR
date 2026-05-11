@@ -6,20 +6,18 @@ import toast from "react-hot-toast";
 
 export default function PolicePassportPage() {
   const [num, setNum] = useState("");
-  const [mrz, setMrz] = useState("");
   const [lookup, setLookup] = useState(null);
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
 
-  const loadByCredentials = useCallback(async (n, m, opts = {}) => {
+  const loadByCredentials = useCallback(async (n, opts = {}) => {
     const { silentToast = false } = opts;
     const nt = String(n ?? "").trim();
-    const mt = String(m ?? "").trim();
     setResult(null);
     setLookup(null);
     setLoading(true);
     try {
-      const out = await api.lookupPassport(nt, mt);
+      const out = await api.lookupPassport(nt);
       setLookup(out);
       setResult({ code: 200, message: "Analyse terminée" });
       if (!silentToast) toast.success("Fiche chargée");
@@ -32,10 +30,9 @@ export default function PolicePassportPage() {
   }, []);
 
   const onSelectPassportVersion = useCallback(
-    async ({ num_passeport, mrz: mrzVal }) => {
+    async ({ num_passeport }) => {
       setNum(String(num_passeport ?? ""));
-      setMrz(String(mrzVal ?? ""));
-      await loadByCredentials(num_passeport, mrzVal, { silentToast: true });
+      await loadByCredentials(num_passeport, { silentToast: true });
       toast.success("Fiche de la version sélectionnée");
     },
     [loadByCredentials]
@@ -43,7 +40,7 @@ export default function PolicePassportPage() {
 
   async function analyzeDocument(e) {
     e.preventDefault();
-    await loadByCredentials(num, mrz);
+    await loadByCredentials(num);
   }
 
   return (
@@ -51,8 +48,7 @@ export default function PolicePassportPage() {
       <header className="space-y-1">
         <h1 className="text-2xl font-bold text-text-light dark:text-text">Fiche & contrôle</h1>
         <p className="text-sm text-muted-light dark:text-muted max-w-xl">
-          Saisissez le numéro et la ligne MRZ lus sur le document pour afficher la fiche, la chaîne de renouvellements et
-          le contrôle documentaire.
+          Saisissez le numéro de passeport pour afficher la fiche, la chaîne de renouvellements et le contrôle documentaire.
         </p>
       </header>
 
@@ -72,21 +68,6 @@ export default function PolicePassportPage() {
               onChange={(e) => setNum(e.target.value)}
               className="w-full max-w-md px-3 py-2 bg-background-light dark:bg-background border border-gray-300 dark:border-gray-600 rounded-lg text-text-light dark:text-text focus:outline-none focus:ring-2 focus:ring-primary"
               placeholder="Comme sur le document"
-              autoComplete="off"
-              required
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-text-light dark:text-text mb-2" htmlFor="police-mrz">
-              MRZ
-            </label>
-            <input
-              id="police-mrz"
-              type="text"
-              value={mrz}
-              onChange={(e) => setMrz(e.target.value)}
-              className="w-full px-3 py-2 bg-background-light dark:bg-background border border-gray-300 dark:border-gray-600 rounded-lg font-mono text-sm text-text-light dark:text-text focus:outline-none focus:ring-2 focus:ring-primary"
-              placeholder="Ligne MRZ"
               autoComplete="off"
               required
             />

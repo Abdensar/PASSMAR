@@ -220,7 +220,7 @@ export default function PanelAdmin({ agent, onLogout }) {
               <div className="mb-6 rounded-2xl border border-valid-light/40 bg-valid-light/10 p-6 text-valid-light dark:border-valid/40 dark:bg-valid/10">
                 <h3 className="text-xl font-semibold mb-2">Nouveau agent créé</h3>
                 <p className="text-sm text-white mb-4">{createdAgent.identifiant} a été ajouté avec succès.</p>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
                   <div className="rounded-xl bg-white/10 p-4">
                     <span className="block text-xs uppercase text-gray-400">Rôle</span>
                     <p className="font-semibold">{createdAgent.role}</p>
@@ -228,10 +228,6 @@ export default function PanelAdmin({ agent, onLogout }) {
                   <div className="rounded-xl bg-white/10 p-4">
                     <span className="block text-xs uppercase text-gray-400">Autorité</span>
                     <p className="font-semibold">{createdAgent.authority_name || createdAgent.id_autorite?.nom_autorite || newAgent.nom_autorite}</p>
-                  </div>
-                  <div className="rounded-xl bg-white/10 p-4">
-                    <span className="block text-xs uppercase text-gray-400">Adresse ETH</span>
-                    <p className="font-semibold break-all">{createdAgent.eth_address}</p>
                   </div>
                 </div>
               </div>

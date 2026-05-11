@@ -227,43 +227,24 @@ export default function PassportDetailCards({ data, onSelectPassportVersion }) {
         <section className="rounded-xl border border-gray-200 dark:border-gray-700 bg-surface-light dark:bg-surface-dark shadow-sm overflow-hidden">
           <div className="bg-blockchain/15 dark:bg-blockchain/25 px-4 py-3 border-b border-gray-200 dark:border-gray-700">
             <h3 className="text-sm font-semibold text-text-light dark:text-text">Statut blockchain — document saisi</h3>
-            <p className="text-[11px] text-muted-light dark:text-muted mt-2 leading-relaxed">
-              Ces champs reflètent l’état enregistré sur la chaîne pour le <strong>hash</strong> du document que vous
-              avez saisi (une version renouvelée peut encore être consultable à titre historique).
-            </p>
           </div>
           <dl className="px-4 py-2">
             <Row label="Statut effectif">
               <StatusBadge statut={on.statut_effectif || "—"} />
             </Row>
-            <Row
-              label="Renouvelé (chaîne)"
-              hint="Vrai si la blockchain indique que ce titre a été remplacé par un renouvellement : ce n’est plus le document actif pour voyager."
-            >
+            <Row label="Renouvelé (chaîne)">
               {on.renewed ? "Oui" : "Non"}
             </Row>
-            <Row
-              label="Interdiction de sortie"
-              hint="Indicateur on-chain de restriction de sortie ; si oui, le contrôle doit appliquer la procédure SOR / blocage selon les règles en vigueur."
-            >
+            <Row label="Interdiction de sortie">
               {on.interdiction_sortie ? "Oui" : "Non"}
             </Row>
-            <Row
-              label="Émission (chaîne)"
-              hint="Date de début de validité enregistrée sur la chaîne pour cette version (liée au hash saisi)."
-            >
+            <Row label="Émission (chaîne)">
               {emisChain}
             </Row>
-            <Row
-              label="Expiration (chaîne)"
-              hint="Date de fin de validité on-chain pour cette version ; une version plus récente peut exister si le passeport a été renouvelé."
-            >
+            <Row label="Expiration (chaîne)">
               {expChain}
             </Row>
-            <Row
-              label="Agent émetteur"
-              hint="Compte Ethereum ayant enregistré cette entrée ; l’identifiant agent est affiché s’il est lié en base."
-            >
+            <Row label="Agent émetteur">
               {on.agent_emetteur_identifiant ? (
                 <span className="block mb-1 font-medium">{on.agent_emetteur_identifiant}</span>
               ) : null}
@@ -305,40 +286,6 @@ export default function PassportDetailCards({ data, onSelectPassportVersion }) {
                 <Row label="CIN">{activeBundle.offchain.cin}</Row>
               </dl>
             </section>
-            <section className="rounded-xl border border-emerald-500/30 dark:border-emerald-600/40 bg-surface-light dark:bg-surface-dark shadow-sm overflow-hidden">
-              <div className="bg-emerald-500/15 dark:bg-emerald-900/25 px-4 py-3 border-b border-gray-200 dark:border-gray-700">
-                <h4 className="text-sm font-semibold text-text-light dark:text-text">Statut blockchain — version actuelle</h4>
-              </div>
-              <dl className="px-4 py-2">
-                <Row label="Statut effectif">
-                  <StatusBadge statut={activeBundle.onchain?.statut_effectif || "—"} />
-                </Row>
-                <Row label="Renouvelé (chaîne)">{activeBundle.onchain?.renewed ? "Oui" : "Non"}</Row>
-                <Row label="Interdiction de sortie">{activeBundle.onchain?.interdiction_sortie ? "Oui" : "Non"}</Row>
-                <Row label="Émission (chaîne)">
-                  {activeBundle.onchain?.date_emission != null
-                    ? fmtDateFromUnix(activeBundle.onchain.date_emission)
-                    : "—"}
-                </Row>
-                <Row label="Expiration (chaîne)">
-                  {activeBundle.onchain?.date_expiration != null
-                    ? fmtDateFromUnix(activeBundle.onchain.date_expiration)
-                    : "—"}
-                </Row>
-                <Row label="Agent émetteur">
-                  {activeBundle.onchain?.agent_emetteur_identifiant ? (
-                    <span className="block mb-1 font-medium">{activeBundle.onchain.agent_emetteur_identifiant}</span>
-                  ) : null}
-                  {activeBundle.onchain?.eth_agent_emetteur ? (
-                    <span className="font-mono text-xs break-all text-muted-light dark:text-muted">
-                      {String(activeBundle.onchain.eth_agent_emetteur)}
-                    </span>
-                  ) : (
-                    "—"
-                  )}
-                </Row>
-              </dl>
-            </section>
           </div>
         </div>
       )}
@@ -346,10 +293,9 @@ export default function PassportDetailCards({ data, onSelectPassportVersion }) {
       <details className="rounded-xl border border-gray-200 dark:border-gray-700 bg-background-light/50 dark:bg-background/30 px-4 py-3 group">
         <summary className="cursor-pointer text-sm font-medium text-muted-light dark:text-muted list-none flex items-center gap-2">
           <span className="transition group-open:rotate-90 text-primary">▸</span>
-          Identifiants techniques (HMAC, transactions)
+          Identifiants techniques (transactions)
         </summary>
         <div className="mt-4 space-y-3 pt-2 border-t border-gray-200 dark:border-gray-700">
-          {off.hmac_hash && <HashDisplay hash={off.hmac_hash} label="HMAC (référence système)" />}
           {off.tx_hash_creation && <HashDisplay hash={off.tx_hash_creation} label="Tx création passeport" />}
         </div>
       </details>
